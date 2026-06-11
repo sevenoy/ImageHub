@@ -1,0 +1,5 @@
+{
+  "name": "ImageHub 图片综合工具",
+  "description": "一个本地图片综合工具，支持多图合成、拖拽换位、批量水印预览与导出。",
+  "requestFramePermissions": []
+}
