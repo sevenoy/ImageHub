@@ -164,6 +164,20 @@ const getSkippedSummary = (stats: LocalImageReadStats) => {
     : `已跳过 ${stats.skippedCount} 个文件`;
 };
 
+type PreviewImageRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+const emptyPreviewImageRect: PreviewImageRect = {
+  left: 0,
+  top: 0,
+  width: 0,
+  height: 0,
+};
+
 const stopEvent = (event: React.PointerEvent) => {
   event.preventDefault();
   event.stopPropagation();
@@ -205,6 +219,7 @@ export const BatchWatermarkPanel: React.FC = () => {
   const [previewIndex, setPreviewIndex] = useState(0);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
   const [previewWidth, setPreviewWidth] = useState(0);
+  const [previewImageRect, setPreviewImageRect] = useState<PreviewImageRect>(emptyPreviewImageRect);
   const [previewLoadRequested, setPreviewLoadRequested] = useState(false);
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -231,6 +246,7 @@ export const BatchWatermarkPanel: React.FC = () => {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const watermarkInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const previewImageRef = useRef<HTMLImageElement>(null);
   const previewOverlayRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const scanAbortControllerRef = useRef<AbortController | null>(null);
@@ -255,6 +271,7 @@ export const BatchWatermarkPanel: React.FC = () => {
     revokePreviewObjectUrl();
     setPreviewImageUrl('');
     setPreviewWidth(0);
+    setPreviewImageRect(emptyPreviewImageRect);
     setPreviewLoading(false);
     setPreviewError('');
   }, [revokePreviewObjectUrl]);
@@ -331,6 +348,7 @@ export const BatchWatermarkPanel: React.FC = () => {
     revokePreviewObjectUrl();
     setPreviewImageUrl('');
     setPreviewWidth(0);
+    setPreviewImageRect(emptyPreviewImageRect);
     setPreviewError('');
     setPreviewLoading(true);
 
@@ -382,15 +400,53 @@ export const BatchWatermarkPanel: React.FC = () => {
     revokePreviewObjectUrl,
   ]);
 
+  const measurePreviewImageRect = useCallback(() => {
+    const preview = previewRef.current;
+    const image = previewImageRef.current;
+    if (!preview || !image || !image.naturalWidth || !image.naturalHeight) {
+      return emptyPreviewImageRect;
+    }
+
+    const previewBounds = preview.getBoundingClientRect();
+    const imageBounds = image.getBoundingClientRect();
+    const naturalRatio = image.naturalWidth / image.naturalHeight;
+    const boxRatio = imageBounds.width / imageBounds.height;
+
+    let width = imageBounds.width;
+    let height = imageBounds.height;
+    let left = imageBounds.left - previewBounds.left;
+    let top = imageBounds.top - previewBounds.top;
+
+    if (boxRatio > naturalRatio) {
+      height = imageBounds.height;
+      width = height * naturalRatio;
+      left += (imageBounds.width - width) / 2;
+    } else {
+      width = imageBounds.width;
+      height = width / naturalRatio;
+      top += (imageBounds.height - height) / 2;
+    }
+
+    return { left, top, width, height };
+  }, []);
+
+  const updatePreviewImageRect = useCallback(() => {
+    const nextRect = measurePreviewImageRect();
+    setPreviewImageRect(nextRect);
+    setPreviewWidth(nextRect.width);
+    return nextRect;
+  }, [measurePreviewImageRect]);
+
   useEffect(() => {
     if (!previewRef.current || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (width) setPreviewWidth(width);
+      if (entries[0]) updatePreviewImageRect();
     });
     observer.observe(previewRef.current);
+    if (previewImageRef.current) observer.observe(previewImageRef.current);
+    updatePreviewImageRect();
     return () => observer.disconnect();
-  }, [previewImageUrl]);
+  }, [previewImageUrl, updatePreviewImageRect]);
 
   useEffect(() => {
     return () => {
@@ -702,11 +758,13 @@ export const BatchWatermarkPanel: React.FC = () => {
   const getPositionFromPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!previewRef.current) return;
     const rect = previewRef.current.getBoundingClientRect();
+    const imageRect = updatePreviewImageRect();
+    if (!imageRect.width || !imageRect.height) return;
     return {
-      x: clamp((event.clientX - rect.left) / rect.width),
-      y: clamp((event.clientY - rect.top) / rect.height),
+      x: clamp((event.clientX - rect.left - imageRect.left) / imageRect.width),
+      y: clamp((event.clientY - rect.top - imageRect.top) / imageRect.height),
     };
-  }, []);
+  }, [updatePreviewImageRect]);
 
   const movePreviewOverlay = useCallback((nextPosition: { x: number; y: number }) => {
     dragPositionRef.current = nextPosition;
@@ -717,10 +775,12 @@ export const BatchWatermarkPanel: React.FC = () => {
       const overlay = previewOverlayRef.current;
       if (!overlay) return;
       const { x, y } = dragPositionRef.current;
-      overlay.style.left = `${x * 100}%`;
-      overlay.style.top = `${y * 100}%`;
+      const imageRect = measurePreviewImageRect();
+      if (!imageRect.width || !imageRect.height) return;
+      overlay.style.left = `${imageRect.left + x * imageRect.width}px`;
+      overlay.style.top = `${imageRect.top + y * imageRect.height}px`;
     });
-  }, []);
+  }, [measurePreviewImageRect]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     stopEvent(event);
@@ -966,6 +1026,13 @@ export const BatchWatermarkPanel: React.FC = () => {
   const previewOptions = useMemo(() => {
     return entries.slice(0, 200).map((entry, index) => ({ entry, index }));
   }, [entries]);
+  const previewOverlayStyle = useMemo<React.CSSProperties>(() => ({
+    left: previewImageRect.width ? `${previewImageRect.left + position.x * previewImageRect.width}px` : `${position.x * 100}%`,
+    top: previewImageRect.height ? `${previewImageRect.top + position.y * previewImageRect.height}px` : `${position.y * 100}%`,
+    touchAction: 'none',
+    userSelect: 'none',
+  }), [position.x, position.y, previewImageRect]);
+  const previewWatermarkWidth = Math.max(28, (previewImageRect.width || previewWidth || 560) * (imageConfig.scalePercent / 100));
 
   return (
     <div className="w-full bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden text-sm">
@@ -1391,6 +1458,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                 className="relative overflow-hidden rounded-xl bg-white shadow-inner touch-none cursor-crosshair select-none"
               >
                 <img
+                  ref={previewImageRef}
                   data-testid="batch-watermark-base-image"
                   src={previewImageUrl}
                   alt="批量水印示例图"
@@ -1398,7 +1466,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                   onDragStart={stopDragEvent}
                   className="block w-full max-h-[360px] object-contain pointer-events-none bg-slate-200"
                   onLoad={() => {
-                    if (previewRef.current) setPreviewWidth(previewRef.current.getBoundingClientRect().width);
+                    updatePreviewImageRect();
                   }}
                 />
                 <div
@@ -1407,7 +1475,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                   draggable={false}
                   onDragStart={stopDragEvent}
                   className="absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-move select-none"
-                  style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%`, touchAction: 'none', userSelect: 'none' }}
+                  style={previewOverlayStyle}
                 >
                   {watermarkType === 'text' ? (
                     <div className="font-black whitespace-nowrap pointer-events-none" style={previewTextStyle}>{textConfig.text || '水印文字'}</div>
@@ -1418,7 +1486,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                       draggable={false}
                       onDragStart={stopDragEvent}
                       className="block pointer-events-none select-none"
-                      style={{ width: Math.max(28, (previewWidth || 560) * (imageConfig.scalePercent / 100)), maxWidth: '90%', height: 'auto', opacity: imageConfig.opacity }}
+                      style={{ width: previewWatermarkWidth, maxWidth: '90%', height: 'auto', opacity: imageConfig.opacity }}
                     />
                   ) : (
                     <div className="px-3 py-2 rounded-lg bg-white/90 border border-slate-200 text-xs font-bold text-slate-500 shadow">上传水印图</div>
