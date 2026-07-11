@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Cloud,
   Eraser,
   FileArchive,
   FolderInput,
@@ -13,9 +12,7 @@ import {
   Image as ImageIcon,
   Loader2,
   Play,
-  ShieldCheck,
   Stamp,
-  Trash2,
   Type,
   Upload,
 } from 'lucide-react';
@@ -39,7 +36,6 @@ import {
 } from '../utils/batchWatermark';
 import {
   ImageFileItem,
-  LocalImageReadProgress,
   LocalImageReadStats,
   canUseFileSystemAccessDirectory,
   pickSourceDirectory,
@@ -57,21 +53,14 @@ import {
 } from '../utils/nativeFolderInputDebug';
 import {
   SavedWatermark,
+  dataUrlToFile,
+  deleteSavedWatermark,
+  fileToDataUrl,
   loadSavedWatermarks,
   saveWatermark,
 } from '../utils/watermarkLibrary';
 import { createImagePreviewBlob } from '../utils/imageDecode';
-import {
-  createIndexedDbWatermarkRepository,
-  createSupabaseWatermarkRepository,
-} from '../utils/cloudWatermarkLibrary';
-import {
-  createSupabaseWatermarkClient,
-  getSupabaseClient,
-  requestMagicLink,
-  signOutSupabase,
-} from '../utils/supabaseClient';
-import { WatermarkCloudAccount } from './WatermarkCloudAccount';
+import { getCenterSnapState, shouldRenderCenterGuide } from '../utils/watermarkInteraction';
 
 type ProcessStatus = {
   total: number;
@@ -115,6 +104,8 @@ const acceptedImageTypes = 'image/jpeg,image/png,image/webp';
 const acceptedImageExtensions = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
 const maxZipFallbackImages = 200;
 const maxStatusErrors = 60;
+const defaultImageConfig = { opacity: 0.85, scalePercent: 60 };
+const defaultPosition = { x: 0.5, y: 0.15 };
 
 const emptyReadStats: LocalImageReadStats = {
   sourceName: '未选择',
@@ -135,12 +126,6 @@ const emptyReadStats: LocalImageReadStats = {
   firstSystemSkippedPaths: [],
   firstSkippedReasons: [],
   firstDecodeFailedPaths: [],
-};
-
-const getReadMethodLabel = (method: LocalImageReadStats['method']) => {
-  if (method === 'showDirectoryPicker') return 'showDirectoryPicker';
-  if (method === 'webkitdirectory') return 'webkitdirectory';
-  return '选择图片';
 };
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
@@ -205,7 +190,6 @@ export const BatchWatermarkPanel: React.FC = () => {
   const [sourceRootName, setSourceRootName] = useState('批量图片');
   const [sourceLabel, setSourceLabel] = useState('尚未选择图片');
   const [readStats, setReadStats] = useState<LocalImageReadStats>(emptyReadStats);
-  const [readProgress, setReadProgress] = useState<LocalImageReadProgress | null>(null);
 
   const [watermarkType, setWatermarkType] = useState<BatchWatermarkType>('image');
   const [textConfig, setTextConfig] = useState({
@@ -217,20 +201,14 @@ export const BatchWatermarkPanel: React.FC = () => {
     outline: false,
   });
   const [imageConfig, setImageConfig] = useState({
-    opacity: 0.85,
-    scalePercent: 18,
+    ...defaultImageConfig,
   });
   const [watermarkFile, setWatermarkFile] = useState<File | null>(null);
   const [watermarkImageUrl, setWatermarkImageUrl] = useState('');
   const [savedWatermarks, setSavedWatermarks] = useState<SavedWatermark[]>([]);
   const [watermarkLibraryStatus, setWatermarkLibraryStatus] = useState('');
-  const [cloudStatus, setCloudStatus] = useState('仅本机');
-  const [cloudUser, setCloudUser] = useState<{ id: string; email?: string | null } | null>(null);
-  const [cloudWatermarkCount, setCloudWatermarkCount] = useState(0);
-  const [localWatermarkCount, setLocalWatermarkCount] = useState(0);
-  const [isSyncingWatermarks, setIsSyncingWatermarks] = useState(false);
   const [activeSavedWatermarkId, setActiveSavedWatermarkId] = useState('');
-  const [position, setPosition] = useState({ x: 0.85, y: 0.9 });
+  const [position, setPosition] = useState({ ...defaultPosition });
 
   const [previewIndex, setPreviewIndex] = useState(0);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
@@ -256,11 +234,14 @@ export const BatchWatermarkPanel: React.FC = () => {
   const [nativeDebug, setNativeDebug] = useState<NativeFolderInputDebug | null>(null);
   const [debugCopyStatus, setDebugCopyStatus] = useState('');
   const [showNativeDebugJson, setShowNativeDebugJson] = useState(false);
-  const [showReadStatsDetails, setShowReadStatsDetails] = useState(false);
+  const [showMoreSettings, setShowMoreSettings] = useState(false);
+  const [isDraggingWatermark, setIsDraggingWatermark] = useState(false);
+  const [isSnappedToCenter, setIsSnappedToCenter] = useState(false);
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const watermarkInputRef = useRef<HTMLInputElement>(null);
+  const libraryWatermarkInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const previewImageRef = useRef<HTMLImageElement>(null);
   const previewOverlayRef = useRef<HTMLDivElement>(null);
@@ -275,46 +256,10 @@ export const BatchWatermarkPanel: React.FC = () => {
   const hasFileSystemAccess = canUseFileSystemAccessDirectory();
   const currentPreviewEntry = entries[Math.min(previewIndex, Math.max(entries.length - 1, 0))];
   const progressPercent = status.total ? Math.round((status.processed / status.total) * 100) : 0;
-  const shouldShowNativeDebugPanel = SHOW_FILE_IMPORT_DEBUG && (status.errors.length > 0 || readStats.errorCount > 0);
-  const localWatermarkRepository = useMemo(() => createIndexedDbWatermarkRepository(), []);
-  const supabase = useMemo(() => getSupabaseClient(), []);
-  const cloudWatermarkRepository = useMemo(
-    () => supabase ? createSupabaseWatermarkRepository(createSupabaseWatermarkClient(supabase), { localCache: localWatermarkRepository }) : null,
-    [localWatermarkRepository, supabase]
-  );
-
   const refreshWatermarkLibrary = useCallback(async () => {
     const cached = await loadSavedWatermarks();
-    setLocalWatermarkCount(cached.length);
-
-    if (!cloudWatermarkRepository || !supabase) {
-      setCloudUser(null);
-      setCloudWatermarkCount(0);
-      setCloudStatus('仅本机：尚未配置云端同步');
-      setSavedWatermarks(cached.map((item) => ({ ...item, source: item.source || 'local' })));
-      return;
-    }
-
-    const { data, error } = await supabase.auth.getUser();
-    if (error) throw error;
-    if (!data.user) {
-      setCloudUser(null);
-      setCloudWatermarkCount(0);
-      setCloudStatus('仅本机：请登录后同步');
-      setSavedWatermarks(cached.map((item) => ({ ...item, source: item.source || 'local' })));
-      return;
-    }
-
-    setCloudUser({ id: data.user.id, email: data.user.email });
-    setCloudStatus('正在同步');
-    const cloudItems = await cloudWatermarkRepository.list();
-    const cachedById = new Map(cached.map((item) => [item.id, item]));
-    const cloudWithCache = cloudItems.map((item) => ({ ...item, dataUrl: cachedById.get(item.id)?.dataUrl }));
-    const localOnly = cached.filter((item) => (item.source || 'local') !== 'cloud' && !item.cloudId);
-    setCloudWatermarkCount(cloudItems.length);
-    setCloudStatus('已同步云端');
-    setSavedWatermarks([...cloudWithCache, ...localOnly]);
-  }, [cloudWatermarkRepository, supabase]);
+    setSavedWatermarks(cached.filter((item) => Boolean(item.dataUrl)).map((item) => ({ ...item, source: 'local' })));
+  }, []);
 
   const revokePreviewObjectUrl = useCallback(() => {
     if (!previewObjectUrlRef.current) return;
@@ -531,7 +476,6 @@ export const BatchWatermarkPanel: React.FC = () => {
     setPreviewLoadRequested(false);
     clearPreviewDisplay();
     setReadStats(emptyReadStats);
-    setReadProgress(null);
     setStatus(emptyStatus);
     setDebugCopyStatus('');
     setShowNativeDebugJson(false);
@@ -553,17 +497,16 @@ export const BatchWatermarkPanel: React.FC = () => {
     setEntries(nextEntries);
     setSelectedSkipped(stats.skippedCount);
     setSourceRootName(stats.sourceName || '批量图片');
-    setSourceLabel(stats.method === 'files' ? `已选择 ${nextEntries.length} 张照片` : `已读取文件夹：${stats.sourceName}（${nextEntries.length} 张照片）`);
+    setSourceLabel(`已选择 ${nextEntries.length} 张照片`);
     setPreviewIndex(0);
     setPreviewLoadRequested(nextEntries.length > 0);
     setPreviewReloadKey((prev) => prev + 1);
     setReadStats(stats);
-    setReadProgress(null);
     setStatus({
       ...emptyStatus,
       skipped: stats.skippedCount,
       warnings: [
-        getSkippedSummary(stats),
+        SHOW_FILE_IMPORT_DEBUG ? getSkippedSummary(stats) : '',
         limited ? `已读取 ${items.length} 张，当前导入前 ${DEFAULT_MAX_BATCH_IMAGES} 张` : '',
         ...stats.warnings,
       ].filter(Boolean),
@@ -616,7 +559,7 @@ export const BatchWatermarkPanel: React.FC = () => {
     void (async () => {
       clearSelectedImages();
       setIsReadingFolder(true);
-      setSourceLabel('正在读取文件夹...');
+      setSourceLabel('正在读取照片…');
       const result = await readImagesFromFileList(stableFiles, 'webkitdirectory', { createObjectUrls: false });
       if (!result.items.length) {
         setNativeDebug(createNativeFolderInputDebug('batch-watermark', folderInputRef.current, stableFiles, result, 0, null));
@@ -673,22 +616,20 @@ export const BatchWatermarkPanel: React.FC = () => {
     try {
       setIsReadingAdvancedFolder(true);
       clearSelectedImages();
-      setSourceLabel('正在等待选择文件夹...');
+      setSourceLabel('正在等待选择文件夹…');
 
       const directory = await pickSourceDirectory();
       const controller = new AbortController();
       scanAbortControllerRef.current = controller;
 
       setSourceRootName(directory.name || '批量图片');
-      setSourceLabel('正在扫描文件夹...');
+      setSourceLabel('正在读取照片…');
 
       const result = await readImagesFromDirectoryHandle(directory, {
         signal: controller.signal,
         createObjectUrls: false,
-        onProgress: (progress) => {
-          setReadProgress(progress);
-          setSelectedSkipped(progress.skippedCount);
-          setSourceLabel(`扫描中：${progress.imageCount} 张照片 / ${progress.skippedCount} 个跳过 / ${progress.totalFiles} 个文件 / ${progress.folderCount} 个文件夹`);
+        onProgress: () => {
+          setSourceLabel('正在读取照片…');
         },
       });
 
@@ -752,37 +693,53 @@ export const BatchWatermarkPanel: React.FC = () => {
     setWatermarkType('image');
   }, [watermarkImageUrl]);
 
-  const saveCurrentWatermarkToLibrary = useCallback(async () => {
-    if (!watermarkFile) {
-      setWatermarkLibraryStatus('请先上传一张水印图片');
-      return;
-    }
-
+  const saveWatermarkToLocalLibrary = useCallback(async (file: File) => {
     try {
-      const promptedName = window.prompt('给这个常用水印命名', watermarkFile.name);
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        throw new Error('水印仅支持 PNG、JPEG 或 WebP 格式');
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        throw new Error('水印文件不能超过 2 MB');
+      }
+      const promptedName = window.prompt('给这个常用水印命名', file.name);
       if (promptedName === null) {
         setWatermarkLibraryStatus('已取消保存常用水印');
         return;
       }
-      const name = promptedName.trim() || watermarkFile.name;
-      const item = cloudWatermarkRepository && cloudUser
-        ? await cloudWatermarkRepository.save(watermarkFile, { name, source: 'cloud' })
-        : await localWatermarkRepository.save(watermarkFile, { name, source: 'local' });
+      const name = promptedName.trim() || file.name;
+      const item: SavedWatermark = {
+        id: `watermark-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        name,
+        mimeType: file.type,
+        dataUrl: await fileToDataUrl(file),
+        createdAt: new Date().toISOString(),
+        size: file.size,
+        source: 'local',
+      };
+      await saveWatermark(item);
       await refreshWatermarkLibrary();
       setActiveSavedWatermarkId(item.id);
-      setWatermarkLibraryStatus(cloudWatermarkRepository && cloudUser ? `已同步云端水印：${name}` : `已保存到本机水印：${name}`);
+      setWatermarkLibraryStatus(`已保存到当前浏览器：${name}`);
     } catch (error) {
       setWatermarkLibraryStatus(`保存常用水印失败：${getErrorMessage(error)}`);
     }
-  }, [cloudUser, cloudWatermarkRepository, localWatermarkRepository, refreshWatermarkLibrary, watermarkFile]);
+  }, [refreshWatermarkLibrary]);
+
+  const handleAddWatermarkToLibrary = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0] || null;
+    event.currentTarget.value = '';
+    if (!file) return;
+    if (watermarkImageUrl) URL.revokeObjectURL(watermarkImageUrl);
+    setWatermarkFile(file);
+    setWatermarkImageUrl(URL.createObjectURL(file));
+    setWatermarkType('image');
+    void saveWatermarkToLocalLibrary(file);
+  }, [saveWatermarkToLocalLibrary, watermarkImageUrl]);
 
   const applySavedWatermark = useCallback(async (item: SavedWatermark) => {
     try {
-      const file = item.dataUrl
-        ? await localWatermarkRepository.download(item)
-        : cloudWatermarkRepository && item.source === 'cloud'
-          ? await cloudWatermarkRepository.download(item)
-          : await localWatermarkRepository.download(item);
+      if (!item.dataUrl) throw new Error('当前浏览器没有这个水印的本地副本');
+      const file = await dataUrlToFile(item.dataUrl, item.name, item.mimeType);
       if (watermarkImageUrl) URL.revokeObjectURL(watermarkImageUrl);
       setWatermarkFile(file);
       setWatermarkImageUrl(URL.createObjectURL(file));
@@ -793,18 +750,13 @@ export const BatchWatermarkPanel: React.FC = () => {
     } catch (error) {
       setWatermarkLibraryStatus(`应用常用水印失败：${getErrorMessage(error)}`);
     }
-  }, [cloudWatermarkRepository, localWatermarkRepository, requestPreviewLoad, watermarkImageUrl]);
+  }, [requestPreviewLoad, watermarkImageUrl]);
 
   const removeSavedWatermark = useCallback(async (item: SavedWatermark) => {
     if (!window.confirm(`删除常用水印“${item.name}”？`)) return;
 
     try {
-      if (item.source === 'cloud') {
-        if (!cloudWatermarkRepository) throw new Error('云端同步尚未配置，无法安全删除云端水印');
-        await cloudWatermarkRepository.remove(item);
-      } else {
-        await localWatermarkRepository.remove(item);
-      }
+      await deleteSavedWatermark(item.id);
       await refreshWatermarkLibrary();
       if (activeSavedWatermarkId === item.id) {
         setActiveSavedWatermarkId('');
@@ -815,43 +767,18 @@ export const BatchWatermarkPanel: React.FC = () => {
     } catch (error) {
       setWatermarkLibraryStatus(`删除常用水印失败：${getErrorMessage(error)}`);
     }
-  }, [activeSavedWatermarkId, cloudWatermarkRepository, localWatermarkRepository, refreshWatermarkLibrary]);
-
-  const syncLocalWatermarksToCloud = useCallback(async () => {
-    if (!cloudWatermarkRepository || !cloudUser) throw new Error('请先登录并配置云端同步');
-    setIsSyncingWatermarks(true);
-    try {
-      const localItems = await localWatermarkRepository.list();
-      const pending = localItems.filter((item) => (item.source || 'local') !== 'cloud' && !item.cloudId);
-      for (const item of pending) {
-        const file = await localWatermarkRepository.download(item);
-        const cloudItem = await cloudWatermarkRepository.save(file, { name: item.name });
-        await saveWatermark({ ...item, cloudId: cloudItem.id });
-      }
-      await refreshWatermarkLibrary();
-      setWatermarkLibraryStatus(`已同步 ${pending.length} 个本机水印到云端；本机缓存已保留。`);
-    } finally {
-      setIsSyncingWatermarks(false);
-    }
-  }, [cloudUser, cloudWatermarkRepository, localWatermarkRepository, refreshWatermarkLibrary]);
-
-  const requestCloudMagicLink = useCallback(async (email: string) => {
-    await requestMagicLink(email);
-    setCloudStatus('已发送 Magic Link，请在邮箱中完成登录后返回此页面');
-  }, []);
-
-  const signOutCloud = useCallback(async () => {
-    await signOutSupabase();
-    await refreshWatermarkLibrary();
-  }, [refreshWatermarkLibrary]);
+  }, [activeSavedWatermarkId, refreshWatermarkLibrary]);
 
   const getPositionFromPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!previewRef.current) return;
     const rect = previewRef.current.getBoundingClientRect();
     const imageRect = updatePreviewImageRect();
     if (!imageRect.width || !imageRect.height) return;
+    const nextX = clamp((event.clientX - rect.left - imageRect.left) / imageRect.width);
+    const centerSnap = getCenterSnapState(nextX, imageRect.width);
+    setIsSnappedToCenter(centerSnap.showGuide);
     return {
-      x: clamp((event.clientX - rect.left - imageRect.left) / imageRect.width),
+      x: centerSnap.x,
       y: clamp((event.clientY - rect.top - imageRect.top) / imageRect.height),
     };
   }, [updatePreviewImageRect]);
@@ -877,6 +804,7 @@ export const BatchWatermarkPanel: React.FC = () => {
     const nextPosition = getPositionFromPointer(event);
     if (!nextPosition) return;
     activeDragPointerRef.current = event.pointerId;
+    setIsDraggingWatermark(true);
     movePreviewOverlay(nextPosition);
     event.currentTarget.setPointerCapture(event.pointerId);
   }, [getPositionFromPointer, movePreviewOverlay]);
@@ -888,7 +816,7 @@ export const BatchWatermarkPanel: React.FC = () => {
     if (nextPosition) movePreviewOverlay(nextPosition);
   }, [getPositionFromPointer, movePreviewOverlay]);
 
-  const handlePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+  const finishWatermarkDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     stopEvent(event);
     if (activeDragPointerRef.current === event.pointerId) {
       activeDragPointerRef.current = null;
@@ -897,6 +825,8 @@ export const BatchWatermarkPanel: React.FC = () => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    setIsDraggingWatermark(false);
+    setIsSnappedToCenter(false);
   }, []);
 
   const resetAll = useCallback(() => {
@@ -907,7 +837,10 @@ export const BatchWatermarkPanel: React.FC = () => {
     setOutputRootTouched(false);
     setFileSuffix('_水印');
     setSuffixSubfolders(false);
-    setPosition({ x: 0.85, y: 0.9 });
+    setImageConfig({ ...defaultImageConfig });
+    setPosition({ ...defaultPosition });
+    setIsDraggingWatermark(false);
+    setIsSnappedToCenter(false);
     setPreviewLoadRequested(false);
     setPreviewReloadKey((prev) => prev + 1);
   }, [clearSelectedImages]);
@@ -931,6 +864,7 @@ export const BatchWatermarkPanel: React.FC = () => {
   }, [outputSummary]);
 
   const startProcessing = useCallback(async () => {
+    setShowMoreSettings(true);
     if (!entries.length) {
       setStatus((prev) => ({ ...prev, errors: ['请先选择要加水印的图片或文件夹'] }));
       return;
@@ -962,7 +896,7 @@ export const BatchWatermarkPanel: React.FC = () => {
     setShowErrors(false);
 
     const initialWarnings = [
-      getSkippedSummary(readStats),
+      SHOW_FILE_IMPORT_DEBUG ? getSkippedSummary(readStats) : '',
       useDirectoryOutput ? '' : '未选择可写输出文件夹，已使用 ZIP fallback 导出',
     ].filter(Boolean) as string[];
 
@@ -1135,7 +1069,6 @@ export const BatchWatermarkPanel: React.FC = () => {
             {SHOW_FILE_IMPORT_DEBUG && <p className="text-[10px] text-violet-600 font-black">{FILE_IMPORT_DEBUG_VERSION}</p>}
           </div>
         </div>
-        <div className="hidden sm:block text-[11px] text-slate-400 font-semibold">最多读取 {DEFAULT_MAX_BATCH_IMAGES} 张</div>
       </div>
 
       <div className="p-5 space-y-5">
@@ -1165,22 +1098,11 @@ export const BatchWatermarkPanel: React.FC = () => {
               <span className="text-xs font-bold">{isReadingFolder ? '读取中' : '选择文件夹'}</span>
             </button>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-            <span>默认使用 webkitdirectory multiple 读取真实本地文件夹。</span>
-            <button
-              type="button"
-              onClick={handleAdvancedPickSourceFolder}
-              disabled={isProcessing || isReadingFolder || isReadingAdvancedFolder}
-              className="font-bold text-slate-500 hover:text-violet-600 disabled:opacity-50"
-            >
-              {isReadingAdvancedFolder ? '高级读取中' : '高级选择文件夹 showDirectoryPicker'}
+          {isReadingFolder && (
+            <button type="button" onClick={cancelFolderScan} className="text-xs font-bold text-rose-500 hover:text-rose-600">
+              取消读取
             </button>
-            {isReadingFolder && (
-              <button type="button" onClick={cancelFolderScan} className="font-bold text-rose-500 hover:text-rose-600">
-                取消读取
-              </button>
-            )}
-          </div>
+          )}
 
           <input ref={imageInputRef} type="file" multiple accept={acceptedImageExtensions} className="hidden" onChange={handleImageInput} />
           <input
@@ -1192,7 +1114,7 @@ export const BatchWatermarkPanel: React.FC = () => {
             {...{ webkitdirectory: '' }}
           />
 
-          {shouldShowNativeDebugPanel && (
+          {SHOW_FILE_IMPORT_DEBUG && (
             <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -1239,80 +1161,66 @@ export const BatchWatermarkPanel: React.FC = () => {
               )}
             </div>
           )}
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-            <div className="bg-slate-50 rounded-xl border border-slate-100 p-2">
-              <div className="text-lg font-black text-slate-700">{entries.length}</div>
-              <div className="text-[10px] text-slate-400">已读取照片</div>
-            </div>
-            <div className="bg-slate-50 rounded-xl border border-slate-100 p-2">
-              <div className="text-lg font-black text-amber-600">{readStats.systemSkippedCount}</div>
-              <div className="text-[10px] text-slate-400">系统文件已忽略</div>
-            </div>
-            <div className="bg-slate-50 rounded-xl border border-slate-100 p-2">
-              <div className="text-lg font-black text-amber-600">{readStats.unsupportedCount}</div>
-              <div className="text-[10px] text-slate-400">不支持格式</div>
-            </div>
-            <div className="bg-slate-50 rounded-xl border border-slate-100 p-2">
-              <div className="text-lg font-black text-rose-600">{readStats.invalidImageCount}</div>
-              <div className="text-[10px] text-slate-400">坏图已忽略</div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-100 bg-slate-50 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setShowReadStatsDetails((prev) => !prev)}
-              className="w-full flex flex-wrap items-center justify-between gap-2 p-3 text-left hover:bg-slate-100/70 transition-colors"
-            >
-              <div>
-                <div className="text-xs font-black text-slate-600">读取明细</div>
-                <div className="text-[11px] font-semibold text-slate-400">
-                  已读取 {readStats.imageCount} 张 / 跳过 {readStats.skippedCount} 个 / 错误 {readStats.errorCount} 个
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500">
-                {showReadStatsDetails ? '收起' : '展开'}
-                {showReadStatsDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </div>
-            </button>
-
-            {showReadStatsDetails && (
-              <div className="border-t border-slate-100 p-3 space-y-2">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
-                  <div><span className="text-slate-400">读取方式：</span><span className="font-bold text-slate-700">{getReadMethodLabel(readStats.method)}</span></div>
-                  <div><span className="text-slate-400">根文件夹：</span><span className="font-bold text-slate-700">{readStats.sourceName}</span></div>
-                  <div><span className="text-slate-400">原始文件：</span><span className="font-bold text-slate-700">{readStats.totalFiles}</span></div>
-                  <div><span className="text-slate-400">已读取照片：</span><span className="font-bold text-slate-700">{readStats.imageCount}</span></div>
-                  <div><span className="text-slate-400">跳过总数：</span><span className="font-bold text-slate-700">{readStats.skippedCount}</span></div>
-                  <div><span className="text-slate-400">已跳过系统文件：</span><span className="font-bold text-slate-700">{readStats.systemSkippedCount}</span></div>
-                  <div><span className="text-slate-400">坏图跳过：</span><span className="font-bold text-slate-700">{getSkippedBreakdown(readStats).badImageCount}</span></div>
-                  <div><span className="text-slate-400">不支持格式：</span><span className="font-bold text-slate-700">{readStats.unsupportedCount}</span></div>
-                  <div><span className="text-slate-400">超出上限跳过：</span><span className="font-bold text-slate-700">{readStats.limitSkippedCount}</span></div>
-                  <div><span className="text-slate-400">错误：</span><span className="font-bold text-slate-700">{readStats.errorCount}</span></div>
-                </div>
-                {readProgress && (
-                  <div className="break-all text-[11px] text-indigo-700">
-                    正在扫描：{readProgress.imageCount} 张照片 / {readProgress.systemSkippedCount} 个系统文件跳过 / {readProgress.skippedCount} 个总跳过 / {readProgress.totalFiles} 个文件；当前 {readProgress.currentPath}
-                  </div>
-                )}
-                {entries.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">前 10 个 relativePath</div>
-                    <div className="max-h-28 overflow-auto rounded-lg bg-white border border-slate-100 p-2 space-y-1">
-                      {entries.slice(0, 10).map((entry) => (
-                        <div key={entry.id} className="break-all text-[11px] font-semibold text-slate-600">{entry.relativePath}</div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <p className="text-xs font-semibold text-slate-500">{entries.length ? `已选择 ${entries.length} 张照片` : '尚未选择照片'}</p>
         </section>
 
         <section className="space-y-3">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">水印类型</h4>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h4 className="text-xs font-bold text-slate-600">常用水印</h4>
+              <p className="mt-1 text-[11px] font-medium text-slate-400">仅保存在当前浏览器</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => libraryWatermarkInputRef.current?.click()}
+              disabled={isProcessing}
+              className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-50"
+            >
+              + 添加常用水印
+            </button>
+          </div>
+          <input ref={libraryWatermarkInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleAddWatermarkToLibrary} />
+          {watermarkLibraryStatus && <p className="text-[11px] font-semibold text-violet-700">{watermarkLibraryStatus}</p>}
+          {savedWatermarks.length ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {savedWatermarks.map((item) => (
+                <div key={item.id} className={`rounded-xl border bg-white p-2 ${activeSavedWatermarkId === item.id ? 'border-violet-400 ring-1 ring-violet-300' : 'border-slate-200'}`}>
+                  <button type="button" onClick={() => applySavedWatermark(item)} disabled={isProcessing} className="block w-full text-left disabled:opacity-50">
+                    <div className="flex h-16 items-center justify-center overflow-hidden rounded-lg bg-slate-50">
+                      <img src={item.dataUrl} alt={item.name} className="max-h-full max-w-full object-contain" draggable={false} />
+                    </div>
+                    <div className="mt-2 truncate text-[11px] font-bold text-slate-700" title={item.name}>{item.name}</div>
+                  </button>
+                  <button type="button" onClick={() => removeSavedWatermark(item)} disabled={isProcessing} className="mt-1 text-[10px] font-semibold text-slate-400 hover:text-rose-600 disabled:opacity-50">删除</button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] font-medium text-slate-400">添加一个常用水印后，点击即可应用。</p>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <button
+            type="button"
+            onClick={() => setShowMoreSettings((prev) => !prev)}
+            className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left text-xs font-bold text-slate-700 hover:bg-slate-100"
+            aria-expanded={showMoreSettings}
+          >
+            更多设置
+            {showMoreSettings ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
+          {showMoreSettings && (
+            <div className="space-y-5 pt-1">
+          <button
+            type="button"
+            onClick={handleAdvancedPickSourceFolder}
+            disabled={isProcessing || isReadingFolder || isReadingAdvancedFolder}
+            className="text-xs font-semibold text-slate-500 hover:text-violet-700 disabled:opacity-50"
+          >
+            {isReadingAdvancedFolder ? '正在读取文件夹…' : '高级选择文件夹'}
+          </button>
+          <h4 className="text-xs font-bold text-slate-500">水印类型</h4>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -1400,74 +1308,6 @@ export const BatchWatermarkPanel: React.FC = () => {
                 <span className="text-xs font-bold">{watermarkFile ? watermarkFile.name : '上传水印图片'}</span>
               </button>
               <input ref={watermarkInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleWatermarkImageInput} />
-              <WatermarkCloudAccount
-                enabled={Boolean(supabase)}
-                email={cloudUser?.email || null}
-                status={cloudStatus}
-                localCount={localWatermarkCount}
-                cloudCount={cloudWatermarkCount}
-                busy={isProcessing || isSyncingWatermarks}
-                onRequestMagicLink={requestCloudMagicLink}
-                onSignOut={signOutCloud}
-                onSyncLocal={syncLocalWatermarksToCloud}
-              />
-              <div className="rounded-xl border border-violet-100 bg-violet-50/50 p-3 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs font-black text-violet-700">常用水印库</div>
-                    <div className="text-[10px] font-semibold text-violet-500">{cloudUser ? '登录后新增水印会同步云端，并保留本机缓存' : '未登录时仅保存在当前浏览器本地'}</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={saveCurrentWatermarkToLibrary}
-                    disabled={!watermarkFile || isProcessing}
-                    className="rounded-lg bg-white border border-violet-200 px-3 py-1.5 text-[11px] font-bold text-violet-700 hover:border-violet-300 disabled:opacity-50"
-                  >
-                    保存到常用水印
-                  </button>
-                </div>
-                {watermarkLibraryStatus && (
-                  <div className="text-[11px] font-semibold text-violet-700">{watermarkLibraryStatus}</div>
-                )}
-                {savedWatermarks.length ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    {savedWatermarks.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`rounded-xl border bg-white p-2 space-y-2 ${activeSavedWatermarkId === item.id ? 'border-violet-400 ring-1 ring-violet-300' : 'border-violet-100'}`}
-                      >
-                        <div className="h-16 rounded-lg bg-slate-100 border border-slate-100 flex items-center justify-center overflow-hidden">
-                          {item.dataUrl ? <img src={item.dataUrl} alt={item.name} className="max-h-full max-w-full object-contain" draggable={false} /> : <Cloud size={18} className="text-sky-400" />}
-                        </div>
-                        <div className="truncate text-[11px] font-bold text-slate-700" title={item.name}>{item.name}</div>
-                        <div className="text-[9px] font-bold text-slate-400">{item.source === 'cloud' ? item.dataUrl ? '云端 · 已缓存' : '云端' : '本机'}</div>
-                        <div className="flex gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => applySavedWatermark(item)}
-                            disabled={isProcessing}
-                            className="flex-1 rounded-lg bg-violet-600 px-2 py-1.5 text-[10px] font-bold text-white hover:bg-violet-700 disabled:opacity-50"
-                          >
-                            使用
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeSavedWatermark(item)}
-                            disabled={isProcessing}
-                            className="rounded-lg border border-slate-200 px-2 py-1.5 text-[10px] font-bold text-slate-500 hover:border-rose-200 hover:text-rose-600 disabled:opacity-50"
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-violet-200 bg-white/70 p-3 text-center text-[11px] font-semibold text-violet-500">
-                    暂无常用水印。上传水印图片后可保存到这里。
-                  </div>
-                )}
-              </div>
               <div>
                 <div className="flex justify-between items-center mb-1.5">
                   <label className="text-xs font-medium text-slate-600">水印大小</label>
@@ -1510,6 +1350,18 @@ export const BatchWatermarkPanel: React.FC = () => {
                   className="w-full h-2 bg-slate-200 rounded-full appearance-none cursor-pointer accent-violet-500"
                 />
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setImageConfig({ ...defaultImageConfig });
+                  setPosition({ ...defaultPosition });
+                }}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:border-violet-300 hover:text-violet-700"
+              >
+                重置水印位置
+              </button>
+            </div>
+          )}
             </div>
           )}
         </section>
@@ -1558,8 +1410,9 @@ export const BatchWatermarkPanel: React.FC = () => {
                 data-testid="batch-watermark-preview"
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
+                onPointerUp={finishWatermarkDrag}
+                onPointerCancel={finishWatermarkDrag}
+                onLostPointerCapture={finishWatermarkDrag}
                 onDragStart={stopDragEvent}
                 className="relative overflow-hidden rounded-xl bg-white shadow-inner touch-none cursor-crosshair select-none"
               >
@@ -1575,6 +1428,18 @@ export const BatchWatermarkPanel: React.FC = () => {
                     updatePreviewImageRect();
                   }}
                 />
+                {shouldRenderCenterGuide(isDraggingWatermark, isSnappedToCenter) && (
+                  <div
+                    data-testid="batch-watermark-center-guide"
+                    data-export-ignore="true"
+                    className="pointer-events-none absolute z-0 w-px bg-violet-500/70"
+                    style={{
+                      left: `${previewImageRect.left + previewImageRect.width / 2}px`,
+                      top: `${previewImageRect.top}px`,
+                      height: `${previewImageRect.height}px`,
+                    }}
+                  />
+                )}
                 <div
                   ref={previewOverlayRef}
                   data-testid="batch-watermark-overlay"
@@ -1620,8 +1485,22 @@ export const BatchWatermarkPanel: React.FC = () => {
           </div>
         </section>
 
+        <section className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={startProcessing}
+            disabled={isProcessing || !entries.length}
+            className="col-span-2 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 p-3 text-xs font-bold text-white shadow-sm transition-colors hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            开始批量加水印
+          </button>
+          <button type="button" onClick={resetAll} disabled={isProcessing} className="col-span-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 hover:border-rose-200 hover:text-rose-600 disabled:opacity-50">清空任务</button>
+        </section>
+
+        {showMoreSettings && (
         <section className="space-y-3">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">输出设置</h4>
+          <h4 className="text-xs font-bold text-slate-500">输出设置</h4>
           <button
             type="button"
             onClick={handlePickOutputFolder}
@@ -1661,25 +1540,14 @@ export const BatchWatermarkPanel: React.FC = () => {
             </label>
           </div>
         </section>
+        )}
 
+        {showMoreSettings && (
         <section className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={startProcessing}
-              disabled={isProcessing || !entries.length}
-              className="col-span-2 flex items-center justify-center gap-1.5 p-3 bg-slate-900 text-white rounded-xl hover:bg-violet-600 transition-all shadow-lg shadow-slate-900/15 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold"
-            >
-              {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              开始批量加水印
-            </button>
-            <button type="button" onClick={cancelProcessing} disabled={!isProcessing} className="flex items-center justify-center gap-1.5 p-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:border-amber-300 hover:text-amber-700 transition-all disabled:opacity-50 text-xs font-bold">
+            <button type="button" onClick={cancelProcessing} disabled={!isProcessing} className="col-span-2 flex items-center justify-center gap-1.5 p-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:border-amber-300 hover:text-amber-700 transition-all disabled:opacity-50 text-xs font-bold">
               <Ban size={14} />
               取消
-            </button>
-            <button type="button" onClick={resetAll} disabled={isProcessing} className="flex items-center justify-center gap-1.5 p-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:border-rose-300 hover:text-rose-600 transition-all disabled:opacity-50 text-xs font-bold">
-              <Trash2 size={14} />
-              清空
             </button>
           </div>
 
@@ -1692,13 +1560,12 @@ export const BatchWatermarkPanel: React.FC = () => {
               <div className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
             </div>
 
-            <div className="grid grid-cols-5 gap-1 text-center">
+            <div className="grid grid-cols-4 gap-1 text-center">
               {[
                 ['总数', status.total || entries.length],
                 ['已完成', status.processed],
                 ['成功', status.success],
                 ['失败', status.failed],
-                ['跳过', status.skipped || selectedSkipped],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg bg-white border border-slate-100 px-1.5 py-2">
                   <div className="text-sm font-black text-slate-700">{value}</div>
@@ -1746,6 +1613,7 @@ export const BatchWatermarkPanel: React.FC = () => {
             )}
           </div>
         </section>
+        )}
       </div>
 
       {outputSummary && (
@@ -1761,7 +1629,7 @@ export const BatchWatermarkPanel: React.FC = () => {
               </div>
             </div>
             <div className="p-5 space-y-4">
-              <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="grid grid-cols-2 gap-2 text-center">
                 <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
                   <div className="text-lg font-black text-emerald-700">{outputSummary.success}</div>
                   <div className="text-[10px] font-bold text-emerald-600">成功</div>
@@ -1769,10 +1637,6 @@ export const BatchWatermarkPanel: React.FC = () => {
                 <div className="rounded-xl bg-rose-50 border border-rose-100 p-3">
                   <div className="text-lg font-black text-rose-700">{outputSummary.failed}</div>
                   <div className="text-[10px] font-bold text-rose-600">失败</div>
-                </div>
-                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
-                  <div className="text-lg font-black text-slate-700">{outputSummary.skipped}</div>
-                  <div className="text-[10px] font-bold text-slate-500">跳过</div>
                 </div>
               </div>
 

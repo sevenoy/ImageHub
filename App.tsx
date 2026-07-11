@@ -29,7 +29,6 @@ import {
 } from 'lucide-react';
 import { CollageGrid } from './components/CollageGrid';
 import { BatchWatermarkPanel } from './components/BatchWatermarkPanel';
-import { LocalFolderReadTestPanel } from './components/LocalFolderReadTestPanel';
 import { CollageItem, LayoutType } from './types';
 import { FILE_IMPORT_DEBUG_VERSION, SHOW_FILE_IMPORT_DEBUG } from './utils/nativeFolderInputDebug';
 
@@ -60,7 +59,7 @@ const shouldIncludeInExport = (node: HTMLElement): boolean =>
   node.dataset.exportIgnore !== 'true';
 
 const App: React.FC = () => {
-  const [activeView, setActiveView] = useState<'collage' | 'folder-test' | 'watermark'>('collage');
+  const [activeView, setActiveView] = useState<'collage' | 'watermark'>('collage');
   const [layout, setLayout] = useState<LayoutType>(LayoutType.GRID_3X3);
   const [items, setItems] = useState<CollageItem[]>([]);
 
@@ -622,10 +621,6 @@ const App: React.FC = () => {
 
         </aside>
       </main>
-      ) : activeView === 'folder-test' ? (
-        <main className="flex-1 container mx-auto px-4 py-6 max-w-6xl">
-          <LocalFolderReadTestPanel />
-        </main>
       ) : (
         <main className="flex-1 container mx-auto px-4 py-6 max-w-5xl">
           <BatchWatermarkPanel />
