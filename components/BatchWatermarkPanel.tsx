@@ -3,7 +3,9 @@ import {
   AlertCircle,
   Ban,
   CheckCircle2,
+  ChevronLeft,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Eraser,
   FileArchive,
@@ -61,6 +63,11 @@ import {
 } from '../utils/watermarkLibrary';
 import { createImagePreviewBlob } from '../utils/imageDecode';
 import { getCenterSnapState, shouldRenderCenterGuide } from '../utils/watermarkInteraction';
+import { BatchWatermarkWorkspace } from './BatchWatermarkWorkspace';
+import { WatermarkControlRail } from './WatermarkControlRail';
+import { WatermarkPreviewCanvas } from './WatermarkPreviewCanvas';
+import { BatchTaskBar } from './BatchTaskBar';
+import { ProcessingResultDrawer } from './ProcessingResultDrawer';
 
 type ProcessStatus = {
   total: number;
@@ -1059,20 +1066,22 @@ export const BatchWatermarkPanel: React.FC = () => {
   const previewWatermarkWidth = Math.max(28, (previewImageRect.width || previewWidth || 560) * (imageConfig.scalePercent / 100));
 
   return (
-    <div className="w-full bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden text-sm">
-      <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+    <BatchWatermarkWorkspace>
+    <div className="w-full overflow-hidden rounded-xl border border-slate-200 bg-white text-sm shadow-sm">
+      <div className="flex h-14 items-center justify-between gap-3 border-b border-slate-200 px-4 sm:px-6">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-violet-100 text-violet-600 rounded-xl"><Stamp size={18} /></div>
+          <div className="rounded-lg bg-violet-100 p-2 text-violet-600"><Stamp size={18} /></div>
           <div>
-            <h2 className="font-bold text-slate-900 text-lg">批量水印</h2>
-            <p className="text-[11px] text-slate-500 font-semibold">单图批量加文字或图片水印，保留目录结构导出</p>
+            <h2 className="text-base font-bold text-slate-900">批量水印</h2>
+            <p className="text-[11px] font-medium text-slate-500">专业摄影工作台</p>
             {SHOW_FILE_IMPORT_DEBUG && <p className="text-[10px] text-violet-600 font-black">{FILE_IMPORT_DEBUG_VERSION}</p>}
           </div>
         </div>
       </div>
 
-      <div className="p-5 space-y-5">
-        <section className="space-y-3">
+      <div className="flex flex-col gap-5 p-4 pb-24 sm:p-5 sm:pb-24 lg:grid lg:min-h-[calc(100dvh-170px)] lg:grid-cols-[minmax(340px,380px)_minmax(0,1fr)] lg:grid-rows-[auto_auto_minmax(0,1fr)_auto] lg:gap-0 lg:p-0">
+        <WatermarkControlRail>
+        <section className="order-1 space-y-3 lg:p-6 lg:pb-0">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">输入来源</h4>
             <span className="text-[10px] text-slate-400">{sourceLabel}</span>
@@ -1164,7 +1173,7 @@ export const BatchWatermarkPanel: React.FC = () => {
           <p className="text-xs font-semibold text-slate-500">{entries.length ? `已选择 ${entries.length} 张照片` : '尚未选择照片'}</p>
         </section>
 
-        <section className="space-y-3">
+        <section className="order-2 space-y-3 lg:px-6">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h4 className="text-xs font-bold text-slate-600">常用水印</h4>
@@ -1182,7 +1191,7 @@ export const BatchWatermarkPanel: React.FC = () => {
           <input ref={libraryWatermarkInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleAddWatermarkToLibrary} />
           {watermarkLibraryStatus && <p className="text-[11px] font-semibold text-violet-700">{watermarkLibraryStatus}</p>}
           {savedWatermarks.length ? (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2">
               {savedWatermarks.map((item) => (
                 <div key={item.id} className={`rounded-xl border bg-white p-2 ${activeSavedWatermarkId === item.id ? 'border-violet-400 ring-1 ring-violet-300' : 'border-slate-200'}`}>
                   <button type="button" onClick={() => applySavedWatermark(item)} disabled={isProcessing} className="block w-full text-left disabled:opacity-50">
@@ -1200,7 +1209,60 @@ export const BatchWatermarkPanel: React.FC = () => {
           )}
         </section>
 
-        <section className="space-y-3">
+        <section className="order-4 space-y-3 lg:px-6">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-600">快速设置</h4>
+            <button
+              type="button"
+              onClick={() => {
+                setImageConfig({ ...defaultImageConfig });
+                setPosition({ ...defaultPosition });
+              }}
+              className="text-[11px] font-semibold text-violet-700 hover:text-violet-800"
+            >
+              重置位置
+            </button>
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-xs font-medium text-slate-600">{watermarkType === 'image' ? '水印大小' : '文字大小'}</label>
+              <span className="text-[11px] font-bold text-slate-700">{watermarkType === 'image' ? `${imageConfig.scalePercent}%` : textConfig.fontSize}</span>
+            </div>
+            <input
+              type="range"
+              min={watermarkType === 'image' ? '2' : '16'}
+              max={watermarkType === 'image' ? '80' : '140'}
+              value={watermarkType === 'image' ? imageConfig.scalePercent : textConfig.fontSize}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (watermarkType === 'image') setImageConfig((prev) => ({ ...prev, scalePercent: value }));
+                else setTextConfig((prev) => ({ ...prev, fontSize: value }));
+              }}
+              className="h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-violet-600"
+            />
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-xs font-medium text-slate-600">透明度</label>
+              <span className="text-[11px] font-bold text-slate-700">{Math.round((watermarkType === 'image' ? imageConfig.opacity : textConfig.opacity) * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0.1"
+              max="1"
+              step="0.01"
+              value={watermarkType === 'image' ? imageConfig.opacity : textConfig.opacity}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (watermarkType === 'image') setImageConfig((prev) => ({ ...prev, opacity: value }));
+                else setTextConfig((prev) => ({ ...prev, opacity: value }));
+              }}
+              className="h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-violet-600"
+            />
+          </div>
+        </section>
+
+        <section className="order-5 space-y-3 lg:px-6 lg:pb-6">
           <button
             type="button"
             onClick={() => setShowMoreSettings((prev) => !prev)}
@@ -1366,22 +1428,50 @@ export const BatchWatermarkPanel: React.FC = () => {
           )}
         </section>
 
-        <section className="space-y-3">
+        </WatermarkControlRail>
+        <WatermarkPreviewCanvas toolbar={null}>
+        <section className="space-y-3 lg:col-start-2 lg:row-start-1 lg:row-span-3 lg:flex lg:min-h-0 lg:flex-col lg:gap-4 lg:overflow-hidden lg:bg-slate-100/80 lg:p-6">
           <div className="flex items-center justify-between gap-3">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">示例图</h4>
-            <select
-              value={previewIndex}
-              onChange={(event) => {
-                setPreviewIndex(Number(event.target.value));
-                requestPreviewLoad();
-              }}
-              disabled={!entries.length || isProcessing}
-              className="max-w-[180px] p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-            >
-              {previewOptions.length ? previewOptions.map(({ entry, index }) => (
-                <option key={entry.id} value={index}>第 {index + 1} 张：{entry.name}</option>
-              )) : <option value={0}>暂无图片</option>}
-            </select>
+            <h4 className="text-sm font-bold text-slate-800">照片预览</h4>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="上一张图片"
+                onClick={() => {
+                  setPreviewIndex((current) => Math.max(0, current - 1));
+                  requestPreviewLoad();
+                }}
+                disabled={!entries.length || isProcessing || previewIndex === 0}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-40"
+              >
+                <ChevronLeft size={15} />
+              </button>
+              <select
+                value={previewIndex}
+                onChange={(event) => {
+                  setPreviewIndex(Number(event.target.value));
+                  requestPreviewLoad();
+                }}
+                disabled={!entries.length || isProcessing}
+                className="max-w-[180px] p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
+              >
+                {previewOptions.length ? previewOptions.map(({ entry, index }) => (
+                  <option key={entry.id} value={index}>{index + 1} / {entries.length} · {entry.name}</option>
+                )) : <option value={0}>暂无图片</option>}
+              </select>
+              <button
+                type="button"
+                aria-label="下一张图片"
+                onClick={() => {
+                  setPreviewIndex((current) => Math.min(entries.length - 1, current + 1));
+                  requestPreviewLoad();
+                }}
+                disabled={!entries.length || isProcessing || previewIndex >= entries.length - 1}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-40"
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
           </div>
           {entries.length > previewOptions.length && (
             <p className="text-[11px] text-slate-400">示例图下拉仅显示前 {previewOptions.length} 张，全部图片仍会参与批量处理。</p>
@@ -1398,7 +1488,7 @@ export const BatchWatermarkPanel: React.FC = () => {
             </button>
           )}
 
-          <div className="bg-slate-100/80 border border-slate-200 rounded-2xl p-3">
+          <div className="flex min-h-[420px] flex-1 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-200/70 p-3 sm:p-4">
             {previewLoading ? (
               <div className="h-44 rounded-xl bg-white border border-dashed border-violet-200 flex items-center justify-center gap-2 text-xs font-semibold text-violet-600">
                 <Loader2 size={15} className="animate-spin" />
@@ -1414,7 +1504,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                 onPointerCancel={finishWatermarkDrag}
                 onLostPointerCapture={finishWatermarkDrag}
                 onDragStart={stopDragEvent}
-                className="relative overflow-hidden rounded-xl bg-white shadow-inner touch-none cursor-crosshair select-none"
+                className="relative max-h-full max-w-full overflow-hidden rounded-lg bg-white shadow-sm touch-none cursor-crosshair select-none"
               >
                 <img
                   ref={previewImageRef}
@@ -1423,7 +1513,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                   alt="批量水印示例图"
                   draggable={false}
                   onDragStart={stopDragEvent}
-                  className="block w-full max-h-[360px] object-contain pointer-events-none bg-slate-200"
+                  className="block max-h-[min(64dvh,680px)] w-full object-contain pointer-events-none bg-slate-200"
                   onLoad={() => {
                     updatePreviewImageRect();
                   }}
@@ -1484,22 +1574,26 @@ export const BatchWatermarkPanel: React.FC = () => {
             )}
           </div>
         </section>
+        </WatermarkPreviewCanvas>
 
-        <section className="grid grid-cols-2 gap-2">
+        <BatchTaskBar>
+        <section className="fixed inset-x-4 bottom-0 z-30 grid grid-cols-2 gap-2 rounded-t-xl border border-slate-200 bg-white p-3 shadow-[0_-8px_20px_rgba(15,23,42,0.1)] lg:static lg:col-span-2 lg:row-start-4 lg:min-h-[76px] lg:grid-cols-[1fr_auto_auto] lg:items-center lg:rounded-none lg:border-x-0 lg:border-b-0 lg:px-6 lg:py-3 lg:shadow-none">
           <button
             type="button"
-            onClick={startProcessing}
-            disabled={isProcessing || !entries.length}
-            className="col-span-2 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 p-3 text-xs font-bold text-white shadow-sm transition-colors hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={isProcessing ? cancelProcessing : startProcessing}
+            disabled={!entries.length}
+            className="col-span-2 flex min-h-12 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-6 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-50 lg:col-start-3 lg:w-[260px]"
           >
-            {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            开始批量加水印
+            {isProcessing ? <Ban size={14} /> : <Play size={14} />}
+            {isProcessing ? '取消处理' : '开始批量加水印'}
           </button>
-          <button type="button" onClick={resetAll} disabled={isProcessing} className="col-span-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 hover:border-rose-200 hover:text-rose-600 disabled:opacity-50">清空任务</button>
+          <div className="hidden text-xs font-semibold text-slate-500 lg:block">{entries.length ? `已选择 ${entries.length} 张照片` : '尚未选择照片'}{outputRootName ? ` · 输出：${outputRootName}` : ''}</div>
+          <button type="button" onClick={resetAll} disabled={isProcessing} className="col-span-2 rounded-lg border border-slate-200 px-4 py-3 text-xs font-bold text-slate-500 hover:border-rose-200 hover:text-rose-600 disabled:opacity-50 lg:col-start-2">清空任务</button>
         </section>
+        </BatchTaskBar>
 
         {showMoreSettings && (
-        <section className="space-y-3">
+        <section className="order-6 space-y-3 lg:col-start-1 lg:row-start-3 lg:overflow-y-auto lg:px-6 lg:pb-6">
           <h4 className="text-xs font-bold text-slate-500">输出设置</h4>
           <button
             type="button"
@@ -1542,8 +1636,8 @@ export const BatchWatermarkPanel: React.FC = () => {
         </section>
         )}
 
-        {showMoreSettings && (
-        <section className="space-y-3">
+        {showMoreSettings && !outputSummary && (
+        <section className="order-8 space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={cancelProcessing} disabled={!isProcessing} className="col-span-2 flex items-center justify-center gap-1.5 p-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:border-amber-300 hover:text-amber-700 transition-all disabled:opacity-50 text-xs font-bold">
               <Ban size={14} />
@@ -1557,7 +1651,7 @@ export const BatchWatermarkPanel: React.FC = () => {
               <span>{progressPercent}%</span>
             </div>
             <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+              <div className="h-full bg-violet-600 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
             </div>
 
             <div className="grid grid-cols-4 gap-1 text-center">
@@ -1617,9 +1711,9 @@ export const BatchWatermarkPanel: React.FC = () => {
       </div>
 
       {outputSummary && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+        <ProcessingResultDrawer>
+          <div className="w-full overflow-hidden rounded-t-xl border border-slate-200 bg-white shadow-[0_-8px_24px_rgba(15,23,42,0.12)]">
+            <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
               <div className="rounded-xl bg-emerald-100 p-2 text-emerald-600">
                 <CheckCircle2 size={18} />
               </div>
@@ -1628,7 +1722,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                 <div className="text-[11px] font-semibold text-slate-500">处理结果已生成</div>
               </div>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="grid gap-4 p-5 lg:grid-cols-[auto_1fr_auto] lg:items-center">
               <div className="grid grid-cols-2 gap-2 text-center">
                 <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
                   <div className="text-lg font-black text-emerald-700">{outputSummary.success}</div>
@@ -1640,7 +1734,7 @@ export const BatchWatermarkPanel: React.FC = () => {
                 </div>
               </div>
 
-              <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 space-y-2">
+              <div className="rounded-lg bg-slate-50 p-3 text-left">
                 <div className="text-[11px] text-slate-500">
                   <span className="font-bold text-slate-700">输出方式：</span>
                   {outputSummary.outputMode === 'directory' ? '目标文件夹' : 'ZIP 下载'}
@@ -1688,8 +1782,9 @@ export const BatchWatermarkPanel: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>
+        </ProcessingResultDrawer>
       )}
     </div>
+    </BatchWatermarkWorkspace>
   );
 };

@@ -622,7 +622,7 @@ const App: React.FC = () => {
         </aside>
       </main>
       ) : (
-        <main className="flex-1 container mx-auto px-4 py-6 max-w-5xl">
+        <main className="flex-1 w-full px-4 py-4 sm:px-5 lg:px-6">
           <BatchWatermarkPanel />
         </main>
       )}
