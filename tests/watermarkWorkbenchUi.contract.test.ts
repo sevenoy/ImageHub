@@ -18,7 +18,7 @@ describe('professional watermark workbench UI contract', () => {
 
   it('uses a desktop control rail and a mobile single-column fallback', () => {
     const panel = readFileSync(componentPath('BatchWatermarkPanel.tsx'), 'utf8');
-    expect(panel).toContain('lg:grid-cols-[minmax(340px,380px)_minmax(0,1fr)]');
+    expect(panel).toContain('lg:grid-cols-[minmax(360px,390px)_minmax(0,1fr)]');
     expect(panel).toContain('<BatchWatermarkWorkspace>');
     expect(panel).toContain('<ProcessingResultDrawer>');
   });

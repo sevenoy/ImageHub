@@ -281,7 +281,7 @@ const App: React.FC = () => {
       )}
 
       {/* Header */}
-      <header className="w-full bg-white border-b border-gray-200 sticky top-0 z-30 px-6 py-3 flex items-center justify-between shadow-sm">
+      <header className={`sticky top-0 z-30 flex w-full items-center justify-between border-b border-slate-200 bg-white px-4 ${activeView === 'watermark' ? 'h-16 sm:h-[72px] sm:px-6' : 'py-3 px-6 shadow-sm'}`}>
         <div className="flex items-center gap-3">
           <div className="bg-indigo-600 p-2 rounded-lg text-white">
             <LayoutGrid size={20} />
@@ -290,27 +290,35 @@ const App: React.FC = () => {
             <h1 className="text-lg font-bold text-slate-900 tracking-tight">
               ImageHub
             </h1>
-            <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">图片综合工具</p>
+            <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{activeView === 'watermark' ? '批量水印工作站' : '图片综合工具'}</p>
             {SHOW_FILE_IMPORT_DEBUG && <p className="text-[9px] text-indigo-600 font-black">{FILE_IMPORT_DEBUG_VERSION}</p>}
           </div>
         </div>
 
-        <div className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-500">
+        {activeView === 'collage' && <div className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-500">
           <span className="flex items-center gap-1"><Zap size={12} className="text-amber-500" /> 拖拽图片可直接上传</span>
           <span className="w-px h-3 bg-slate-200"></span>
           <span className="flex items-center gap-1"><Zap size={12} className="text-amber-500" /> 点击两张图片交换位置</span>
-        </div>
+        </div>}
 
-        <a
-          href="#"
-          className="text-slate-400 hover:text-slate-800 transition-colors"
-          title="Github"
-        >
-          <Github size={20} />
-        </a>
+        {activeView === 'watermark' ? (
+          <button
+            type="button"
+            onClick={() => setActiveView('collage')}
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            title="切换到多图合成"
+            aria-label="切换到多图合成"
+          >
+            <LayoutGrid size={18} />
+          </button>
+        ) : (
+          <a href="#" className="text-slate-400 hover:text-slate-800 transition-colors" title="Github">
+            <Github size={20} />
+          </a>
+        )}
       </header>
 
-      <div className="w-full px-4 pt-4 relative z-20">
+      {activeView === 'collage' && <div className="w-full px-4 pt-4 relative z-20">
         <div className="container mx-auto">
           <div className="inline-flex w-full sm:w-auto items-center gap-1 rounded-2xl bg-white border border-slate-200 p-1 shadow-sm">
             <button
@@ -335,7 +343,7 @@ const App: React.FC = () => {
             </button>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Main Content - Flex Column on Mobile, Row on Desktop */}
       {activeView === 'collage' ? (
@@ -622,7 +630,7 @@ const App: React.FC = () => {
         </aside>
       </main>
       ) : (
-        <main className="flex-1 w-full px-4 py-4 sm:px-5 lg:px-6">
+        <main className="flex-1 w-full">
           <BatchWatermarkPanel />
         </main>
       )}
