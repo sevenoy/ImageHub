@@ -21,6 +21,7 @@ import {
 } from '../utils/localImageFiles';
 import {
   FILE_IMPORT_DEBUG_VERSION,
+  SHOW_FILE_IMPORT_DEBUG,
   NativeFolderInputDebug,
   copyNativeFolderInputDebug,
   createInitialNativeFolderInputDebug,
@@ -52,6 +53,7 @@ const makeEmptyReport = (): LocalImageReadReport => ({
   invalidImageCount: 0,
   decodeFailedCount: 0,
   limitSkippedCount: 0,
+  unsupportedCount: 0,
   errorCount: 0,
   firstRelativePaths: [],
   firstSystemSkippedPaths: [],
@@ -319,7 +321,7 @@ export const LocalFolderReadTestPanel: React.FC = () => {
           <div>
             <h2 className="font-bold text-slate-900 text-lg">本地文件夹读取测试</h2>
             <p className="text-[11px] text-slate-500 font-semibold">默认使用 webkitdirectory multiple 读取真实本地文件夹</p>
-            <p className="text-[10px] text-indigo-600 font-black">{FILE_IMPORT_DEBUG_VERSION}</p>
+            {SHOW_FILE_IMPORT_DEBUG && <p className="text-[10px] text-indigo-600 font-black">{FILE_IMPORT_DEBUG_VERSION}</p>}
           </div>
         </div>
         <div className="hidden sm:block text-[11px] text-slate-400 font-semibold">{displayReport.mode}</div>
@@ -371,7 +373,7 @@ export const LocalFolderReadTestPanel: React.FC = () => {
           />
         </section>
 
-        <section className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 space-y-2">
+        {SHOW_FILE_IMPORT_DEBUG && <section className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-xs font-black text-indigo-700">原生文件夹输入诊断</div>
@@ -390,18 +392,16 @@ export const LocalFolderReadTestPanel: React.FC = () => {
           <pre className="max-h-80 overflow-auto rounded-lg bg-white border border-indigo-100 p-3 text-[11px] leading-relaxed text-slate-700 whitespace-pre-wrap break-all">
             {JSON.stringify(nativeDebug || createInitialNativeFolderInputDebug('folder-read', directoryInputRef.current), null, 2)}
           </pre>
-        </section>
+        </section>}
 
         <section className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 text-center">
           {[
             ['读取方式', displayReport.mode],
             ['根文件夹', displayReport.rootName],
-            ['原始文件', displayReport.rawFileCount],
-            ['支持图片', displayReport.imageCount],
-            ['跳过', displayReport.skippedCount],
-            ['系统跳过', displayReport.systemSkippedCount],
-            ['无法解码', displayReport.decodeFailedCount],
-            ['无效图片', displayReport.invalidImageCount],
+            ['已读取照片', displayReport.imageCount],
+            ['系统文件已忽略', displayReport.systemSkippedCount],
+            ['不支持格式', displayReport.unsupportedCount],
+            ['坏图已忽略', displayReport.invalidImageCount],
             ['超限跳过', displayReport.limitSkippedCount],
             ['错误', displayReport.errorCount],
           ].map(([label, value]) => (
@@ -414,6 +414,7 @@ export const LocalFolderReadTestPanel: React.FC = () => {
 
         <section className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2">
           <div className="text-xs font-bold text-slate-500">诊断信息</div>
+          <div className="text-[11px] text-slate-500">原始文件：{displayReport.rawFileCount}；最终可处理照片：{displayReport.imageCount}</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
             {diagnosticRows.map(([key, value]) => (
               <div key={key} className="rounded-lg bg-white border border-slate-100 px-2 py-1.5 text-[11px]">

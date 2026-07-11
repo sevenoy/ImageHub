@@ -1,3 +1,5 @@
+import { validateImageDecode } from './imageDecode';
+
 export type LocalImageReadMode = 'webkitdirectory' | 'showDirectoryPicker' | 'files';
 
 export type LocalImageItem = {
@@ -24,6 +26,7 @@ export type LocalImageReadReport = {
   invalidImageCount: number;
   decodeFailedCount: number;
   limitSkippedCount: number;
+  unsupportedCount: number;
   errorCount: number;
   firstRelativePaths: string[];
   firstSystemSkippedPaths: string[];
@@ -82,6 +85,11 @@ export type LocalImageReadOptions = {
   onProgress?: (progress: LocalImageReadProgress) => void;
 };
 
+export type InputFileClassification =
+  | { kind: 'image' }
+  | { kind: 'system'; reason: string }
+  | { kind: 'unsupported'; reason: string };
+
 export type DirectoryHandleLike = {
   name: string;
   values?: () => AsyncIterable<FileSystemHandleLike>;
@@ -112,6 +120,7 @@ type FileWithPath = {
 
 const SUPPORTED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const UNSUPPORTED_PREVIEW_EXTENSIONS = new Set(['heic', 'heif', 'avif']);
+const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 export const DEFAULT_MAX_LOCAL_IMAGES = 1000;
 const GENERATED_DIRECTORY_NAMES = new Set([
   '.git',
@@ -199,36 +208,16 @@ const makeObjectUrl = (file: File, createObjectUrls: boolean) => {
   return URL.createObjectURL(file);
 };
 
-export async function canDecodeImage(file: File): Promise<boolean> {
-  try {
-    if (typeof createImageBitmap === 'function') {
-      const bitmap = await createImageBitmap(file);
-      bitmap.close();
-      return true;
-    }
-
-    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function' || typeof Image === 'undefined') {
-      // No decode capability available in this environment; don't reject valid files.
-      return true;
-    }
-
-    return await new Promise<boolean>((resolve) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        resolve(true);
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        resolve(false);
-      };
-      img.src = url;
-    });
-  } catch {
-    return false;
+export const classifyInputFile = (relativePath: unknown, file: Pick<File, 'name' | 'type'>): InputFileClassification => {
+  const fileName = toSafeString(file?.name);
+  if (isMacSystemFile(relativePath, fileName)) return { kind: 'system', reason: 'mac_system_file' };
+  if (isSupportedImageName(fileName) || SUPPORTED_MIME_TYPES.has(toSafeString(file?.type).toLowerCase())) {
+    return { kind: 'image' };
   }
-}
+  return { kind: 'unsupported', reason: 'unsupported_format' };
+};
+
+export const canDecodeImage = (file: File, signal?: AbortSignal) => validateImageDecode(file, signal);
 
 const makeItem = (file: File, relativePath: string, createObjectUrls: boolean): LocalImageItem => ({
   id: makeImageId(relativePath, file),
@@ -256,6 +245,7 @@ const buildResult = async (
     validateDecode?: boolean;
     maxImages?: number;
     signal?: AbortSignal;
+    onProgress?: (progress: LocalImageReadProgress) => void;
   } = {}
 ): Promise<LocalImageReadResult> => {
   const startedAt = performance.now();
@@ -282,6 +272,23 @@ const buildResult = async (
     if (firstSkippedReasons.length < 20) firstSkippedReasons.push(reason);
   };
 
+  const imageCandidates: Array<{ file: File; relativePath: string }> = [];
+  const reportProgress = (currentPath = '') => {
+    options.onProgress?.({
+      totalFiles: fileEntries.length,
+      imageCount: itemsById.size,
+      skippedCount,
+      systemSkippedCount,
+      invalidImageCount,
+      decodeFailedCount,
+      limitSkippedCount,
+      unsupportedCount,
+      folderCount: directories.size,
+      currentPath,
+    });
+  };
+
+  // First phase: classify quickly without decoding, so large folders stay responsive.
   for (const { file, rawRelativePath } of fileEntries) {
     if (options.signal?.aborted) {
       throw new DOMException('任务已取消', 'AbortError');
@@ -290,57 +297,65 @@ const buildResult = async (
     const directoryPath = getDirectoryPath(relativePath);
     if (directoryPath) directories.add(directoryPath);
 
-    const fileName = toSafeString(file?.name);
+    const classification = classifyInputFile(relativePath, file);
 
-    if (isMacSystemFile(relativePath, fileName)) {
+    if (classification.kind === 'system') {
       skippedCount += 1;
       systemSkippedCount += 1;
       if (firstSystemSkippedPaths.length < 20) firstSystemSkippedPaths.push(relativePath);
-      pushReason(`${relativePath}:mac_system_file`);
-      errors.push(`${relativePath}：已跳过 macOS 系统元数据文件 mac_system_file`);
+      pushReason(`${relativePath}:${classification.reason}`);
       continue;
     }
 
-    if (!isSupportedImageName(fileName)) {
+    if (classification.kind === 'unsupported') {
       skippedCount += 1;
       unsupportedCount += 1;
-      pushReason(`${relativePath}:unsupported_format`);
-      if (isUnsupportedPreviewName(fileName)) {
+      pushReason(`${relativePath}:${classification.reason}`);
+      if (isUnsupportedPreviewName(file.name)) {
         warnings.add('HEIC / HEIF / AVIF 当前不支持浏览器直接预览，已跳过');
       }
-      errors.push(`${relativePath}：已跳过不支持的格式`);
       continue;
     }
+    imageCandidates.push({ file, relativePath });
+  }
 
-    // Enforce the valid-image cap before the expensive decode step.
-    if (itemsById.size >= maxImages) {
-      skippedCount += 1;
-      limitSkippedCount += 1;
-      pushReason(`${relativePath}:over_limit (已超过 ${maxImages} 张上限)`);
-      continue;
-    }
+  // Second phase: bounded batches of four shared-decoder validations.
+  for (let start = 0; start < imageCandidates.length; start += 4) {
+    abortIfNeeded(options.signal);
+    const batch = imageCandidates.slice(start, start + 4);
+    const decoded = await Promise.all(batch.map(async (candidate) => ({
+      candidate,
+      decodable: !validateDecode || await canDecodeImage(candidate.file, options.signal),
+    })));
 
-    // Real decode validation: reject text/corrupt files masquerading as images.
-    if (validateDecode) {
-      let decodable = true;
-      try {
-        decodable = await canDecodeImage(file);
-      } catch {
-        decodable = false;
-      }
+    for (const { candidate, decodable } of decoded) {
+      abortIfNeeded(options.signal);
       if (!decodable) {
         skippedCount += 1;
         decodeFailedCount += 1;
         invalidImageCount += 1;
-        if (firstDecodeFailedPaths.length < 20) firstDecodeFailedPaths.push(relativePath);
-        pushReason(`${relativePath}:decode_failed (无法解码，可能是损坏或伪装的图片)`);
-        errors.push(`${relativePath}：已跳过无法解码的图片`);
-        continue;
+        if (firstDecodeFailedPaths.length < 20) firstDecodeFailedPaths.push(candidate.relativePath);
+        pushReason(`${candidate.relativePath}:decode_failed (无法解码，可能是损坏或伪装的图片)`);
+      } else if (itemsById.size >= maxImages) {
+        skippedCount += 1;
+        limitSkippedCount += 1;
+        pushReason(`${candidate.relativePath}:over_limit (已超过 ${maxImages} 张上限)`);
+      } else {
+        const item = makeItem(candidate.file, candidate.relativePath, createObjectUrls);
+        itemsById.set(item.id, item);
       }
+      reportProgress(candidate.relativePath);
     }
 
-    const item = makeItem(file, relativePath, createObjectUrls);
-    itemsById.set(item.id, item);
+    if (itemsById.size >= maxImages && start + batch.length < imageCandidates.length) {
+      const remaining = imageCandidates.slice(start + batch.length);
+      skippedCount += remaining.length;
+      limitSkippedCount += remaining.length;
+      remaining.slice(0, Math.max(0, 20 - firstSkippedReasons.length)).forEach(({ relativePath }) => {
+        pushReason(`${relativePath}:over_limit (已超过 ${maxImages} 张上限)`);
+      });
+      break;
+    }
   }
 
   const images = [...itemsById.values()].sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'zh-Hans-CN'));
@@ -358,6 +373,7 @@ const buildResult = async (
     invalidImageCount,
     decodeFailedCount,
     limitSkippedCount,
+    unsupportedCount,
     errorCount: errors.length,
     firstRelativePaths,
     firstSystemSkippedPaths,
@@ -397,7 +413,7 @@ const buildResult = async (
 export async function readImagesFromFileList(
   fileListOrArray: FileList | File[] | ArrayLike<File> | null | undefined,
   mode: 'webkitdirectory' | 'files' = 'files',
-  options: { createObjectUrls?: boolean; validateDecode?: boolean; maxImages?: number; signal?: AbortSignal } = {}
+  options: LocalImageReadOptions = {}
 ): Promise<LocalImageReadResult> {
   const files = Array.from(fileListOrArray || []);
   const fileEntries = files.map((file, index) => ({
@@ -409,6 +425,7 @@ export async function readImagesFromFileList(
     validateDecode: options.validateDecode ?? true,
     maxImages: options.maxImages,
     signal: options.signal,
+    onProgress: options.onProgress,
   });
 }
 
@@ -505,6 +522,7 @@ export const readImagesFromDirectoryHandle = async (
     validateDecode: options.validateDecode ?? true,
     maxImages: options.maxImages,
     signal: options.signal,
+    onProgress: options.onProgress,
   });
 
   if (readErrors.length) {

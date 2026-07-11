@@ -2,9 +2,13 @@ export type SavedWatermark = {
   id: string;
   name: string;
   mimeType: string;
-  dataUrl: string;
+  dataUrl?: string;
   createdAt: string;
   size: number;
+  source?: 'local' | 'cloud';
+  cloudId?: string;
+  storagePath?: string;
+  sha256?: string;
 };
 
 const dbName = 'instagrid-watermark-library';
@@ -79,6 +83,11 @@ export const loadSavedWatermarks = async () => {
   return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 };
 
+export const getSavedWatermark = async (id: string) => {
+  const item = await runStoreRequest<SavedWatermark | undefined>('readonly', (store) => store.get(id));
+  return item || null;
+};
+
 export const saveWatermark = async (item: SavedWatermark) => {
   await runStoreRequest<IDBValidKey>('readwrite', (store) => store.put(item));
 };
@@ -86,4 +95,3 @@ export const saveWatermark = async (item: SavedWatermark) => {
 export const deleteSavedWatermark = async (id: string) => {
   await runStoreRequest<undefined>('readwrite', (store) => store.delete(id));
 };
-

@@ -31,7 +31,7 @@ import { CollageGrid } from './components/CollageGrid';
 import { BatchWatermarkPanel } from './components/BatchWatermarkPanel';
 import { LocalFolderReadTestPanel } from './components/LocalFolderReadTestPanel';
 import { CollageItem, LayoutType } from './types';
-import { FILE_IMPORT_DEBUG_VERSION } from './utils/nativeFolderInputDebug';
+import { FILE_IMPORT_DEBUG_VERSION, SHOW_FILE_IMPORT_DEBUG } from './utils/nativeFolderInputDebug';
 
 // Placeholder images from Picsum
 const DEFAULT_IMAGES = [
@@ -292,7 +292,7 @@ const App: React.FC = () => {
               ImageHub
             </h1>
             <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">图片综合工具</p>
-            <p className="text-[9px] text-indigo-600 font-black">{FILE_IMPORT_DEBUG_VERSION}</p>
+            {SHOW_FILE_IMPORT_DEBUG && <p className="text-[9px] text-indigo-600 font-black">{FILE_IMPORT_DEBUG_VERSION}</p>}
           </div>
         </div>
 

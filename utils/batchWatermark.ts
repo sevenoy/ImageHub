@@ -1,4 +1,5 @@
 import { ZipBuilder } from './zipBuilder';
+import { decodeImageForCanvas, type DecodedImage } from './imageDecode';
 
 export type BatchWatermarkType = 'text' | 'image';
 
@@ -76,12 +77,7 @@ export type WatermarkRenderConfig = {
   image: ImageWatermarkConfig;
 };
 
-export type LoadedCanvasImage = {
-  source: CanvasImageSource;
-  width: number;
-  height: number;
-  close: () => void;
-};
+export type LoadedCanvasImage = DecodedImage;
 
 export type RenderWatermarkResult = {
   blob: Blob;
@@ -309,40 +305,8 @@ export const collectImagesFromDirectory = async (
   };
 };
 
-export const loadCanvasImage = async (blob: Blob): Promise<LoadedCanvasImage> => {
-  if ('createImageBitmap' in window) {
-    try {
-      const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' } as ImageBitmapOptions);
-      return {
-        source: bitmap,
-        width: bitmap.width,
-        height: bitmap.height,
-        close: () => bitmap.close(),
-      };
-    } catch {
-      // Fall back to HTMLImageElement decoding.
-    }
-  }
-
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
-  img.decoding = 'async';
-  img.src = url;
-
-  try {
-    await img.decode();
-  } catch (error) {
-    URL.revokeObjectURL(url);
-    throw error;
-  }
-
-  return {
-    source: img,
-    width: img.naturalWidth || img.width,
-    height: img.naturalHeight || img.height,
-    close: () => URL.revokeObjectURL(url),
-  };
-};
+export const loadCanvasImage = (blob: Blob, signal?: AbortSignal): Promise<LoadedCanvasImage> =>
+  decodeImageForCanvas(blob, signal);
 
 const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality?: number) =>
   new Promise<Blob>((resolve, reject) => {
@@ -387,7 +351,7 @@ export const renderWatermarkedImage = async (
   signal?: AbortSignal
 ): Promise<RenderWatermarkResult> => {
   abortIfNeeded(signal);
-  const sourceImage = await loadCanvasImage(file);
+  const sourceImage = await loadCanvasImage(file, signal);
 
   try {
     abortIfNeeded(signal);

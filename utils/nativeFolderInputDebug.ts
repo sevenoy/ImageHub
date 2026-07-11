@@ -1,6 +1,8 @@
 import { LocalImageReadResult } from './localImageFiles';
 
 export const FILE_IMPORT_DEBUG_VERSION = 'FILE_IMPORT_DEBUG_VERSION_2026_06_09_02';
+const viteEnv = (import.meta as ImportMeta & { env?: Record<string, boolean | undefined> }).env || {};
+export const SHOW_FILE_IMPORT_DEBUG = viteEnv.DEV === true;
 
 export type NativeFolderInputDebugPage = 'folder-read' | 'batch-watermark';
 
