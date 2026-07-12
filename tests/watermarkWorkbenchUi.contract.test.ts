@@ -22,4 +22,19 @@ describe('professional watermark workbench UI contract', () => {
     expect(panel).toContain('<BatchWatermarkWorkspace>');
     expect(panel).toContain('<ProcessingResultDrawer>');
   });
+
+  it('keeps the result drawer independently dismissible without clearing results', () => {
+    const panel = readFileSync(componentPath('BatchWatermarkPanel.tsx'), 'utf8');
+    expect(panel).toContain('const [resultDrawerOpen, setResultDrawerOpen] = useState(false)');
+    expect(panel).toContain('aria-label="收起处理结果"');
+    expect(panel).toContain('aria-label="关闭处理结果"');
+    expect(panel).toContain('onClick={() => setResultDrawerOpen(false)}');
+    expect(panel).not.toContain('onClick={() => setOutputSummary(null)}');
+  });
+
+  it('anchors the drawer to the desktop preview workspace instead of the control rail', () => {
+    const drawer = readFileSync(componentPath('ProcessingResultDrawer.tsx'), 'utf8');
+    expect(drawer).toContain('lg:absolute lg:inset-x-0 lg:bottom-0');
+    expect(drawer).not.toContain('lg:left-[380px]');
+  });
 });

@@ -21,4 +21,11 @@ describe('batch watermark production UI contract', () => {
     expect(panelSource).toContain('SHOW_FILE_IMPORT_DEBUG && (');
     expect(panelSource).not.toContain('<WatermarkCloudAccount');
   });
+
+  it('exposes the shared output folder picker from the desktop task bar and more settings', () => {
+    expect(panelSource).toContain('选择输出位置');
+    expect(panelSource).toContain('更改输出位置');
+    expect(panelSource).toContain('输出：ZIP 下载');
+    expect((panelSource.match(/onClick=\{handlePickOutputFolder\}/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
 });

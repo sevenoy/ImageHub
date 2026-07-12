@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Eraser,
   FileArchive,
   FolderInput,
   FolderOutput,
@@ -17,6 +16,7 @@ import {
   Settings,
   Type,
   Upload,
+  X,
 } from 'lucide-react';
 import {
   BatchImageEntry,
@@ -235,6 +235,7 @@ export const BatchWatermarkPanel: React.FC = () => {
   const [status, setStatus] = useState<ProcessStatus>(emptyStatus);
   const [outputSummary, setOutputSummary] = useState<OutputSummary | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [resultDrawerOpen, setResultDrawerOpen] = useState(false);
   const [isReadingFolder, setIsReadingFolder] = useState(false);
   const [isReadingAdvancedFolder, setIsReadingAdvancedFolder] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
@@ -470,6 +471,15 @@ export const BatchWatermarkPanel: React.FC = () => {
       revokeImageFileItemUrls(imageItemsRef.current);
     };
   }, [revokePreviewObjectUrl, watermarkImageUrl]);
+
+  useEffect(() => {
+    if (!resultDrawerOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setResultDrawerOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [resultDrawerOpen]);
 
   const clearSelectedImages = useCallback(() => {
     scanAbortControllerRef.current?.abort();
@@ -899,6 +909,7 @@ export const BatchWatermarkPanel: React.FC = () => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setOutputSummary(null);
+    setResultDrawerOpen(true);
     setIsProcessing(true);
     setShowErrors(false);
 
@@ -980,6 +991,7 @@ export const BatchWatermarkPanel: React.FC = () => {
       if (zipBuilder) {
         const zipBlob = zipBuilder.toBlob();
         downloadBlob(zipBlob, `${rootName}.zip`);
+        setResultDrawerOpen(true);
         setOutputSummary({
           success: completedSuccess,
           failed: completedFailed,
@@ -991,6 +1003,7 @@ export const BatchWatermarkPanel: React.FC = () => {
         });
         setStatus((prev) => ({ ...prev, zipDownloaded: true, currentFile: '' }));
       } else {
+        setResultDrawerOpen(true);
         setOutputSummary({
           success: completedSuccess,
           failed: completedFailed,
@@ -1565,6 +1578,53 @@ export const BatchWatermarkPanel: React.FC = () => {
             )}
           </div>
         </section>
+        {resultDrawerOpen && (isProcessing || outputSummary) && (
+          <ProcessingResultDrawer>
+            <div className="w-full overflow-hidden rounded-t-xl border border-slate-200 bg-white shadow-[0_-8px_24px_rgba(15,23,42,0.12)]">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className={`rounded-xl p-2 ${outputSummary ? 'bg-emerald-100 text-emerald-600' : 'bg-violet-100 text-violet-600'}`}>
+                    {outputSummary ? <CheckCircle2 size={18} /> : <Loader2 size={18} className="animate-spin" />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-base font-black text-slate-900">{outputSummary ? '批量水印完成' : '批量处理进度'}</div>
+                    <div className="truncate text-[11px] font-semibold text-slate-500">{outputSummary ? '处理结果已生成' : `已处理 ${status.processed} / ${status.total} 张`}</div>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button type="button" onClick={() => setResultDrawerOpen(false)} aria-label="收起处理结果" title="收起处理结果" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"><ChevronDown size={17} /></button>
+                  <button type="button" onClick={() => setResultDrawerOpen(false)} aria-label="关闭处理结果" title="关闭处理结果" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"><X size={17} /></button>
+                </div>
+              </div>
+              {isProcessing ? (
+                <div className="space-y-3 p-4 sm:p-5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-600"><span>处理进度</span><span>{progressPercent}%</span></div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-violet-600 transition-all duration-300" style={{ width: `${progressPercent}%` }} /></div>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    {[['总数', status.total || entries.length], ['已完成', status.processed], ['成功', status.success], ['失败', status.failed]].map(([label, value]) => (
+                      <div key={label} className="rounded-lg border border-slate-100 bg-slate-50 px-1.5 py-2"><div className="text-sm font-black text-slate-700">{value}</div><div className="text-[9px] text-slate-400">{label}</div></div>
+                    ))}
+                  </div>
+                  {status.currentFile && <div className="truncate text-[11px] text-slate-500">当前：{status.currentFile}</div>}
+                  {status.warnings.map((warning, index) => <div key={`${warning}-${index}`} className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 p-2 text-[11px] text-amber-700"><FileArchive size={14} className="mt-0.5 shrink-0" /><span>{warning}</span></div>)}
+                  {status.errors.length > 0 && <button type="button" onClick={() => setShowErrors((value) => !value)} className="text-xs font-bold text-rose-700">错误列表（{status.errors.length}）</button>}
+                  {showErrors && status.errors.map((error, index) => <div key={`${error}-${index}`} className="break-words text-[11px] text-rose-700">{error}</div>)}
+                  <button type="button" onClick={cancelProcessing} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100">取消处理</button>
+                </div>
+              ) : outputSummary ? (
+                <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[auto_1fr_auto] lg:items-center">
+                  <div className="grid grid-cols-2 gap-2 text-center"><div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3"><div className="text-lg font-black text-emerald-700">{outputSummary.success}</div><div className="text-[10px] font-bold text-emerald-600">成功</div></div><div className="rounded-xl border border-rose-100 bg-rose-50 p-3"><div className="text-lg font-black text-rose-700">{outputSummary.failed}</div><div className="text-[10px] font-bold text-rose-600">失败</div></div></div>
+                  <div className="rounded-lg bg-slate-50 p-3 text-left text-[11px] text-slate-500"><div><span className="font-bold text-slate-700">输出方式：</span>{outputSummary.outputMode === 'directory' ? '目标文件夹' : 'ZIP 下载'}</div><div><span className="font-bold text-slate-700">输出文件夹名：</span><span className="break-all">{outputSummary.outputFolderName}</span></div><div><span className="font-bold text-slate-700">输出位置：</span><span className="break-all">{outputSummary.outputLocation}</span></div></div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {outputSummary.failed > 0 && <button type="button" onClick={() => setShowErrors(true)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100">查看失败原因</button>}
+                    <button type="button" onClick={copyOutputLocation} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-violet-300 hover:text-violet-700">{outputSummary.copied ? '已复制' : '复制输出路径'}</button>
+                  </div>
+                  {showErrors && status.errors.length > 0 && <div className="max-h-32 overflow-auto rounded-lg border border-rose-100 bg-rose-50 p-3 text-[11px] text-rose-700">{status.errors.map((error, index) => <div key={`${error}-${index}`} className="break-words">{error}</div>)}</div>}
+                </div>
+              ) : null}
+            </div>
+          </ProcessingResultDrawer>
+        )}
         </WatermarkPreviewCanvas>
 
         <BatchTaskBar>
@@ -1585,9 +1645,36 @@ export const BatchWatermarkPanel: React.FC = () => {
             <Settings size={17} /> 设置
           </button>
           <div className="hidden min-w-0 items-center gap-3 border-l border-slate-700 pl-5 text-xs font-semibold text-slate-200 lg:flex">
-            <span>{isProcessing ? `处理中 ${status.processed} / ${status.total}` : entries.length ? `已选择 ${entries.length} 张照片` : '尚未选择照片'}</span>
+            {isProcessing ? (
+              <button type="button" onClick={() => setResultDrawerOpen(true)} className="hover:text-white">
+                处理中 {status.processed} / {status.total} · 查看进度
+              </button>
+            ) : outputSummary ? (
+              <button type="button" onClick={() => setResultDrawerOpen(true)} className="hover:text-white">
+                已完成 {outputSummary.success} 张 · 查看结果
+              </button>
+            ) : (
+              <span>{entries.length ? `已选择 ${entries.length} 张照片` : '尚未选择照片'}</span>
+            )}
             <span className="h-4 w-px bg-slate-700" />
-            <span className="truncate">输出：{outputRootName || '未命名输出'}</span>
+            {hasFileSystemAccess ? (
+              <button
+                type="button"
+                onClick={handlePickOutputFolder}
+                disabled={isProcessing}
+                title={outputDirectoryName || '未选择输出位置，将下载 ZIP'}
+                className="flex min-w-0 items-center gap-1.5 text-left hover:text-white disabled:opacity-50"
+              >
+                <FolderOutput size={15} className="shrink-0" />
+                {outputDirectoryName ? (
+                  <><span className="truncate">输出到：{outputDirectoryName}</span><span className="shrink-0 underline">更改输出位置</span></>
+                ) : (
+                  <><span>输出：ZIP 下载</span><span className="shrink-0 underline">选择输出位置</span></>
+                )}
+              </button>
+            ) : (
+              <span>输出：ZIP 下载</span>
+            )}
           </div>
           <button
             type="button"
@@ -1605,6 +1692,10 @@ export const BatchWatermarkPanel: React.FC = () => {
         {showMoreSettings && (
         <section className="order-6 space-y-3 lg:col-start-1 lg:row-start-3 lg:overflow-y-auto lg:px-6 lg:pb-6">
           <h4 className="text-xs font-bold text-slate-500">输出设置</h4>
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
+            <span>输出位置</span>
+            <span className="truncate pl-3" title={outputDirectoryName || undefined}>{outputDirectoryName || 'ZIP 下载'}</span>
+          </div>
           <button
             type="button"
             onClick={handlePickOutputFolder}
@@ -1612,8 +1703,9 @@ export const BatchWatermarkPanel: React.FC = () => {
             className="w-full flex items-center justify-center gap-2 p-3 bg-white border border-slate-200 rounded-xl text-slate-600 hover:border-violet-300 hover:text-violet-700 hover:shadow-sm transition-all disabled:opacity-50"
           >
             <FolderOutput size={15} />
-            <span className="text-xs font-bold">{outputDirectoryName ? `输出到：${outputDirectoryName}` : hasFileSystemAccess ? '选择输出文件夹' : '当前浏览器不支持文件夹写入'}</span>
+            <span className="text-xs font-bold">{outputDirectoryName ? `更改输出文件夹（${outputDirectoryName}）` : hasFileSystemAccess ? '选择输出文件夹' : '当前浏览器不支持文件夹写入'}</span>
           </button>
+          {!outputDirectoryName && <p className="text-[11px] leading-relaxed text-amber-700">未选择输出文件夹，将下载 ZIP。</p>}
           <label className="block">
             <span className="block text-xs font-medium text-slate-600 mb-1.5">输出根文件夹名</span>
             <input
@@ -1646,154 +1738,7 @@ export const BatchWatermarkPanel: React.FC = () => {
         </section>
         )}
 
-        {showMoreSettings && !outputSummary && (
-        <section className="order-8 space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={cancelProcessing} disabled={!isProcessing} className="col-span-2 flex items-center justify-center gap-1.5 p-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:border-amber-300 hover:text-amber-700 transition-all disabled:opacity-50 text-xs font-bold">
-              <Ban size={14} />
-              取消
-            </button>
-          </div>
-
-          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3 space-y-3">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
-              <span>处理进度</span>
-              <span>{progressPercent}%</span>
-            </div>
-            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-              <div className="h-full bg-violet-600 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
-            </div>
-
-            <div className="grid grid-cols-4 gap-1 text-center">
-              {[
-                ['总数', status.total || entries.length],
-                ['已完成', status.processed],
-                ['成功', status.success],
-                ['失败', status.failed],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-lg bg-white border border-slate-100 px-1.5 py-2">
-                  <div className="text-sm font-black text-slate-700">{value}</div>
-                  <div className="text-[9px] text-slate-400">{label}</div>
-                </div>
-              ))}
-            </div>
-
-            {status.currentFile && <div className="truncate text-[11px] text-slate-500">当前：{status.currentFile}</div>}
-
-            <div className="space-y-2">
-              {status.success > 0 && !isProcessing && (
-                <div className="flex items-start gap-2 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg p-2">
-                  <CheckCircle2 size={14} className="mt-0.5 flex-shrink-0" />
-                  <span>已完成 {status.success} 张，输出方式：{status.outputMode === 'directory' ? '目标文件夹' : 'ZIP 包'}{status.zipDownloaded ? '，ZIP 已开始下载' : ''}</span>
-                </div>
-              )}
-              {status.warnings.map((warning, index) => (
-                <div key={`${warning}-${index}`} className="flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
-                  <FileArchive size={14} className="mt-0.5 flex-shrink-0" />
-                  <span>{warning}</span>
-                </div>
-              ))}
-              {status.cancelled && (
-                <div className="flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
-                  <Eraser size={14} className="mt-0.5 flex-shrink-0" />
-                  <span>任务已取消，UI 已恢复可操作。</span>
-                </div>
-              )}
-            </div>
-
-            {status.errors.length > 0 && (
-              <div className="border border-rose-100 bg-rose-50 rounded-xl overflow-hidden">
-                <button type="button" onClick={() => setShowErrors(!showErrors)} className="w-full flex items-center justify-between gap-2 p-2 text-[11px] font-bold text-rose-700">
-                  <span className="flex items-center gap-1.5"><AlertCircle size={14} /> 错误列表（{status.errors.length}）</span>
-                </button>
-                {showErrors && (
-                  <div className="max-h-32 overflow-auto border-t border-rose-100 bg-white/60 p-2 space-y-1">
-                    {status.errors.map((error, index) => (
-                      <div key={`${error}-${index}`} className="text-[11px] text-rose-700 break-words">{error}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-        )}
       </div>
-
-      {outputSummary && (
-        <ProcessingResultDrawer>
-          <div className="w-full overflow-hidden rounded-t-xl border border-slate-200 bg-white shadow-[0_-8px_24px_rgba(15,23,42,0.12)]">
-            <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
-              <div className="rounded-xl bg-emerald-100 p-2 text-emerald-600">
-                <CheckCircle2 size={18} />
-              </div>
-              <div>
-                <div className="text-base font-black text-slate-900">批量水印完成</div>
-                <div className="text-[11px] font-semibold text-slate-500">处理结果已生成</div>
-              </div>
-            </div>
-            <div className="grid gap-4 p-5 lg:grid-cols-[auto_1fr_auto] lg:items-center">
-              <div className="grid grid-cols-2 gap-2 text-center">
-                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
-                  <div className="text-lg font-black text-emerald-700">{outputSummary.success}</div>
-                  <div className="text-[10px] font-bold text-emerald-600">成功</div>
-                </div>
-                <div className="rounded-xl bg-rose-50 border border-rose-100 p-3">
-                  <div className="text-lg font-black text-rose-700">{outputSummary.failed}</div>
-                  <div className="text-[10px] font-bold text-rose-600">失败</div>
-                </div>
-              </div>
-
-              <div className="rounded-lg bg-slate-50 p-3 text-left">
-                <div className="text-[11px] text-slate-500">
-                  <span className="font-bold text-slate-700">输出方式：</span>
-                  {outputSummary.outputMode === 'directory' ? '目标文件夹' : 'ZIP 下载'}
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  <span className="font-bold text-slate-700">输出文件夹名：</span>
-                  <span className="break-all">{outputSummary.outputFolderName}</span>
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  <span className="font-bold text-slate-700">输出位置：</span>
-                  <span className="break-all">{outputSummary.outputLocation}</span>
-                </div>
-                <div className="text-[10px] leading-relaxed text-slate-400">
-                  普通网页不能直接打开 Finder 文件夹。可复制输出位置后，在浏览器下载记录或 Finder 中查看结果。
-                </div>
-              </div>
-
-              <div className="flex flex-wrap justify-end gap-2">
-                {outputSummary.failed > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowErrors(true);
-                      setOutputSummary(null);
-                    }}
-                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
-                  >
-                    查看失败原因
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={copyOutputLocation}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-violet-300 hover:text-violet-700"
-                >
-                  {outputSummary.copied ? '已复制' : '复制输出路径'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOutputSummary(null)}
-                  className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800"
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        </ProcessingResultDrawer>
-      )}
     </div>
     </BatchWatermarkWorkspace>
   );
