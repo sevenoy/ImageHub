@@ -252,6 +252,7 @@ export const BatchWatermarkPanel: React.FC = () => {
   const [showMoreSettings, setShowMoreSettings] = useState(false);
   const [isDraggingWatermark, setIsDraggingWatermark] = useState(false);
   const [isSnappedToCenter, setIsSnappedToCenter] = useState(false);
+  const [taskBarHeight, setTaskBarHeight] = useState(0);
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -1137,8 +1138,11 @@ export const BatchWatermarkPanel: React.FC = () => {
 
   return (
     <BatchWatermarkWorkspace>
-    <div className="w-full bg-white text-sm">
-      <div className="flex flex-col gap-5 p-4 pb-24 sm:p-5 sm:pb-24 lg:grid lg:h-[calc(100dvh-152px)] lg:grid-cols-[minmax(360px,390px)_minmax(0,1fr)] lg:grid-rows-[auto_auto_minmax(0,1fr)_auto] lg:gap-0 lg:overflow-hidden lg:p-0">
+    <div
+      className="w-full bg-white text-sm lg:h-full"
+      style={{ '--batch-taskbar-height': `${taskBarHeight}px` } as React.CSSProperties}
+    >
+      <div className="flex flex-col gap-5 p-4 pb-[calc(var(--batch-taskbar-height)+1.25rem)] sm:p-5 sm:pb-[calc(var(--batch-taskbar-height)+1.25rem)] lg:grid lg:h-full lg:grid-cols-[minmax(360px,390px)_minmax(0,1fr)] lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:gap-0 lg:overflow-hidden lg:p-0 lg:pb-[calc(var(--batch-taskbar-height)+1.25rem)]">
         <WatermarkControlRail>
         <section className="order-1 space-y-3 lg:order-2 lg:px-6">
           <div className="flex items-center justify-between">
@@ -1250,11 +1254,11 @@ export const BatchWatermarkPanel: React.FC = () => {
           <input ref={libraryWatermarkInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleAddWatermarkToLibrary} />
           {watermarkLibraryStatus && <p className="text-[11px] font-semibold text-violet-700">{watermarkLibraryStatus}</p>}
           {savedWatermarks.length ? (
-            <div className="grid grid-cols-2 gap-2">
+            <div data-testid="batch-watermark-library" className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
               {savedWatermarks.map((item) => (
-                <div key={item.id} className={`rounded-xl border bg-white p-2 ${activeSavedWatermarkId === item.id ? 'border-violet-400 ring-1 ring-violet-300' : 'border-slate-200'}`}>
+                <div key={item.id} className={`w-[104px] shrink-0 rounded-xl border bg-white p-2 sm:w-[116px] ${activeSavedWatermarkId === item.id ? 'border-violet-400 ring-1 ring-violet-300' : 'border-slate-200'}`}>
                   <button type="button" onClick={() => applySavedWatermark(item)} disabled={isProcessing} className="block w-full text-left disabled:opacity-50">
-                    <div className="flex h-16 items-center justify-center overflow-hidden rounded-lg bg-slate-50">
+                    <div className="flex h-14 items-center justify-center overflow-hidden rounded-lg bg-slate-50 sm:h-16">
                       <img src={item.dataUrl} alt={item.name} className="max-h-full max-w-full object-contain" draggable={false} />
                     </div>
                     <div className="mt-2 truncate text-[11px] font-bold text-slate-700" title={item.name}>{item.name}</div>
@@ -1686,8 +1690,8 @@ export const BatchWatermarkPanel: React.FC = () => {
         )}
         </WatermarkPreviewCanvas>
 
-        <BatchTaskBar>
-        <section className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-2 gap-2 bg-[#101b38] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:static lg:grid-cols-[auto_auto_1fr_auto_auto] lg:items-center lg:gap-5 lg:p-0">
+        <BatchTaskBar onHeightChange={setTaskBarHeight}>
+        <section className="grid grid-cols-2 gap-2 lg:grid-cols-[auto_auto_1fr_auto_auto] lg:items-center lg:gap-5">
           <button
             type="button"
             onClick={() => imageInputRef.current?.click()}

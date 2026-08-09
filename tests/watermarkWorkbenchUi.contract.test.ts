@@ -32,9 +32,10 @@ describe('professional watermark workbench UI contract', () => {
     expect(panel).not.toContain('onClick={() => setOutputSummary(null)}');
   });
 
-  it('anchors the drawer to the desktop preview workspace instead of the control rail', () => {
+  it('keeps the drawer fixed above the shared taskbar', () => {
     const drawer = readFileSync(componentPath('ProcessingResultDrawer.tsx'), 'utf8');
-    expect(drawer).toContain('lg:absolute lg:inset-x-0 lg:bottom-0');
+    expect(drawer).toContain('fixed inset-x-0');
+    expect(drawer).toContain('var(--batch-taskbar-height)');
     expect(drawer).not.toContain('lg:left-[380px]');
   });
 });

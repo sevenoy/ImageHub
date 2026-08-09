@@ -25,10 +25,10 @@ import {
   Sliders,
   ChevronDown,
   ChevronUp,
-  Stamp,
 } from 'lucide-react';
 import { CollageGrid } from './components/CollageGrid';
 import { BatchWatermarkPanel } from './components/BatchWatermarkPanel';
+import { ToolModeSwitcher } from './components/ToolModeSwitcher';
 import { CollageItem, LayoutType } from './types';
 import { FILE_IMPORT_DEBUG_VERSION, SHOW_FILE_IMPORT_DEBUG } from './utils/nativeFolderInputDebug';
 
@@ -318,32 +318,7 @@ const App: React.FC = () => {
         )}
       </header>
 
-      {activeView === 'collage' && <div className="w-full px-4 pt-4 relative z-20">
-        <div className="container mx-auto">
-          <div className="inline-flex w-full sm:w-auto items-center gap-1 rounded-2xl bg-white border border-slate-200 p-1 shadow-sm">
-            <button
-              type="button"
-              onClick={() => setActiveView('collage')}
-              className={`flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all ${
-                activeView === 'collage' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <LayoutGrid size={16} />
-              多图合成
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveView('watermark')}
-              className={`flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all ${
-                activeView === 'watermark' ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <Stamp size={16} />
-              批量水印
-            </button>
-          </div>
-        </div>
-      </div>}
+      <ToolModeSwitcher activeView={activeView} onChange={setActiveView} />
 
       {/* Main Content - Flex Column on Mobile, Row on Desktop */}
       {activeView === 'collage' ? (
@@ -630,7 +605,7 @@ const App: React.FC = () => {
         </aside>
       </main>
       ) : (
-        <main className="flex-1 w-full">
+        <main className="w-full lg:flex lg:min-h-0 lg:flex-1">
           <BatchWatermarkPanel />
         </main>
       )}
