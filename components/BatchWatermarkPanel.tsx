@@ -28,6 +28,7 @@ import {
   downloadBlob,
   ensureDirectory,
   getEntryFile,
+  getFittedTextWatermarkFontSize,
   loadCanvasImage,
   makeOutputRelativePath,
   makeUniqueZipPath,
@@ -62,7 +63,12 @@ import {
   saveWatermark,
 } from '../utils/watermarkLibrary';
 import { createImagePreviewBlob } from '../utils/imageDecode';
-import { getCenterSnapState, shouldRenderCenterGuide } from '../utils/watermarkInteraction';
+import {
+  clampCenteredWatermarkPosition,
+  getCenterSnapState,
+  getFittedImageWatermarkSize,
+  shouldRenderCenterGuide,
+} from '../utils/watermarkInteraction';
 import { BatchWatermarkWorkspace } from './BatchWatermarkWorkspace';
 import { WatermarkControlRail } from './WatermarkControlRail';
 import { WatermarkPreviewCanvas } from './WatermarkPreviewCanvas';
@@ -212,6 +218,7 @@ export const BatchWatermarkPanel: React.FC = () => {
   });
   const [watermarkFile, setWatermarkFile] = useState<File | null>(null);
   const [watermarkImageUrl, setWatermarkImageUrl] = useState('');
+  const [watermarkAspectRatio, setWatermarkAspectRatio] = useState(1);
   const [savedWatermarks, setSavedWatermarks] = useState<SavedWatermark[]>([]);
   const [watermarkLibraryStatus, setWatermarkLibraryStatus] = useState('');
   const [activeSavedWatermarkId, setActiveSavedWatermarkId] = useState('');
@@ -253,6 +260,7 @@ export const BatchWatermarkPanel: React.FC = () => {
   const previewRef = useRef<HTMLDivElement>(null);
   const previewImageRef = useRef<HTMLImageElement>(null);
   const previewOverlayRef = useRef<HTMLDivElement>(null);
+  const previewWatermarkRef = useRef<HTMLImageElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const scanAbortControllerRef = useRef<AbortController | null>(null);
   const imageItemsRef = useRef<ImageFileItem[]>([]);
@@ -794,11 +802,21 @@ export const BatchWatermarkPanel: React.FC = () => {
     const nextX = clamp((event.clientX - rect.left - imageRect.left) / imageRect.width);
     const centerSnap = getCenterSnapState(nextX, imageRect.width);
     setIsSnappedToCenter(centerSnap.showGuide);
-    return {
+    const pointerPosition = {
       x: centerSnap.x,
       y: clamp((event.clientY - rect.top - imageRect.top) / imageRect.height),
     };
-  }, [updatePreviewImageRect]);
+    const watermarkBounds = watermarkType === 'text'
+      ? previewOverlayRef.current?.getBoundingClientRect()
+      : previewWatermarkRef.current?.getBoundingClientRect();
+    if (!watermarkBounds?.width || !watermarkBounds.height) return pointerPosition;
+    return clampCenteredWatermarkPosition(pointerPosition, {
+      imageWidth: imageRect.width,
+      imageHeight: imageRect.height,
+      watermarkWidth: watermarkBounds.width,
+      watermarkHeight: watermarkBounds.height,
+    });
+  }, [updatePreviewImageRect, watermarkType]);
 
   const movePreviewOverlay = useCallback((nextPosition: { x: number; y: number }) => {
     dragPositionRef.current = nextPosition;
@@ -1053,30 +1071,69 @@ export const BatchWatermarkPanel: React.FC = () => {
   ]);
 
   const previewFontSize = useMemo(() => {
-    return Math.max(12, Math.round((textConfig.fontSize / 1000) * (previewWidth || 560)));
-  }, [previewWidth, textConfig.fontSize]);
+    const requestedFontSize = Math.max(1, Math.round((textConfig.fontSize / 1000) * (previewWidth || 560)));
+    if (typeof document === 'undefined') return requestedFontSize;
+    const context = document.createElement('canvas').getContext('2d');
+    if (!context) return requestedFontSize;
+    return getFittedTextWatermarkFontSize(
+      context,
+      textConfig,
+      requestedFontSize,
+      previewImageRect.width || previewWidth || 560,
+      previewImageRect.height || 560
+    ).fontSize;
+  }, [previewImageRect.height, previewImageRect.width, previewWidth, textConfig]);
 
   const previewTextStyle = useMemo<React.CSSProperties & { WebkitTextStroke?: string }>(() => ({
     color: textConfig.color,
     fontSize: `${previewFontSize}px`,
+    fontFamily: 'Arial, sans-serif',
+    fontWeight: 700,
     opacity: textConfig.opacity,
-    lineHeight: 1.1,
+    lineHeight: 'normal',
     textShadow: textConfig.shadow
-      ? '0 2px 10px rgba(15, 23, 42, 0.45), 0 0 1px rgba(255, 255, 255, 0.8)'
+      ? `0 ${Math.max(1, previewFontSize * 0.05)}px ${Math.max(3, previewFontSize * 0.12)}px rgba(15, 23, 42, 0.42)`
       : undefined,
-    WebkitTextStroke: textConfig.outline ? '1px rgba(15, 23, 42, 0.7)' : undefined,
+    WebkitTextStroke: textConfig.outline ? `${Math.max(2, previewFontSize * 0.08)}px rgba(15, 23, 42, 0.7)` : undefined,
+    padding: `${Math.max(
+      textConfig.outline ? Math.max(2, previewFontSize * 0.08) / 2 : 0,
+      textConfig.shadow ? Math.max(3, previewFontSize * 0.12) + Math.max(1, previewFontSize * 0.05) : 0
+    )}px`,
   }), [previewFontSize, textConfig.color, textConfig.opacity, textConfig.outline, textConfig.shadow]);
 
   const previewOptions = useMemo(() => {
     return entries.slice(0, 200).map((entry, index) => ({ entry, index }));
   }, [entries]);
+  const previewWatermarkSize = getFittedImageWatermarkSize({
+    imageWidth: previewImageRect.width || previewWidth || 560,
+    imageHeight: previewImageRect.height || 560,
+    watermarkAspectRatio,
+    scalePercent: imageConfig.scalePercent,
+  });
   const previewOverlayStyle = useMemo<React.CSSProperties>(() => ({
     left: previewImageRect.width ? `${previewImageRect.left + position.x * previewImageRect.width}px` : `${position.x * 100}%`,
     top: previewImageRect.height ? `${previewImageRect.top + position.y * previewImageRect.height}px` : `${position.y * 100}%`,
+    width: watermarkImageUrl ? `${previewWatermarkSize.width}px` : undefined,
     touchAction: 'none',
     userSelect: 'none',
-  }), [position.x, position.y, previewImageRect]);
-  const previewWatermarkWidth = Math.max(28, (previewImageRect.width || previewWidth || 560) * (imageConfig.scalePercent / 100));
+  }), [position.x, position.y, previewImageRect, previewWatermarkSize.width, watermarkImageUrl]);
+
+  useEffect(() => {
+    const watermarkBounds = watermarkType === 'text'
+      ? previewOverlayRef.current?.getBoundingClientRect()
+      : previewWatermarkRef.current?.getBoundingClientRect();
+    if (!previewImageRect.width || !previewImageRect.height || !watermarkBounds?.width || !watermarkBounds.height) return;
+    const nextPosition = clampCenteredWatermarkPosition(position, {
+      imageWidth: previewImageRect.width,
+      imageHeight: previewImageRect.height,
+      watermarkWidth: watermarkBounds.width,
+      watermarkHeight: watermarkBounds.height,
+    });
+    if (nextPosition.x !== position.x || nextPosition.y !== position.y) {
+      dragPositionRef.current = nextPosition;
+      setPosition(nextPosition);
+    }
+  }, [imageConfig.scalePercent, position, previewImageRect, textConfig.fontSize, textConfig.outline, textConfig.shadow, textConfig.text, watermarkAspectRatio, watermarkType]);
 
   return (
     <BatchWatermarkWorkspace>
@@ -1543,15 +1600,17 @@ export const BatchWatermarkPanel: React.FC = () => {
                   style={previewOverlayStyle}
                 >
                   {watermarkType === 'text' ? (
-                    <div className="font-black whitespace-nowrap pointer-events-none" style={previewTextStyle}>{textConfig.text || '水印文字'}</div>
+                    <div className="whitespace-nowrap pointer-events-none" style={previewTextStyle}>{textConfig.text || '水印文字'}</div>
                   ) : watermarkImageUrl ? (
                     <img
+                      ref={previewWatermarkRef}
                       src={watermarkImageUrl}
                       alt="图片水印预览"
                       draggable={false}
                       onDragStart={stopDragEvent}
+                      onLoad={(event) => setWatermarkAspectRatio(event.currentTarget.naturalHeight / Math.max(event.currentTarget.naturalWidth, 1))}
                       className="block pointer-events-none select-none"
-                      style={{ width: previewWatermarkWidth, maxWidth: '90%', height: 'auto', opacity: imageConfig.opacity }}
+                      style={{ width: '100%', height: 'auto', opacity: imageConfig.opacity }}
                     />
                   ) : (
                     <div className="px-3 py-2 rounded-lg bg-white/90 border border-slate-200 text-xs font-bold text-slate-500 shadow">上传水印图</div>

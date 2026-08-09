@@ -1,5 +1,10 @@
 import { ZipBuilder } from './zipBuilder';
 import { decodeImageForCanvas, type DecodedImage } from './imageDecode';
+import {
+  clampAnchoredWatermarkPosition,
+  clampCenteredWatermarkPosition,
+  getFittedImageWatermarkSize,
+} from './watermarkInteraction';
 
 export type BatchWatermarkType = 'text' | 'image';
 
@@ -344,6 +349,48 @@ const getReadableContrastStroke = (hexColor: string) => {
   return luminance > 0.65 ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255, 255, 255, 0.82)';
 };
 
+const getTextWatermarkVisualBounds = (
+  ctx: CanvasRenderingContext2D,
+  config: TextWatermarkConfig,
+  fontSize: number
+) => {
+  ctx.font = `700 ${fontSize}px Arial, sans-serif`;
+  const metrics = ctx.measureText(config.text);
+  const strokePadding = config.outline ? Math.max(2, fontSize * 0.08) / 2 : 0;
+  const shadowBlur = config.shadow ? Math.max(3, fontSize * 0.12) : 0;
+  const shadowOffsetX = config.shadow ? Math.max(1, fontSize * 0.035) : 0;
+  const shadowOffsetY = config.shadow ? Math.max(1, fontSize * 0.05) : 0;
+
+  return {
+    left: (metrics.actualBoundingBoxLeft || metrics.width / 2) + strokePadding + Math.max(0, shadowBlur - shadowOffsetX),
+    right: (metrics.actualBoundingBoxRight || metrics.width / 2) + strokePadding + shadowBlur + shadowOffsetX,
+    top: (metrics.actualBoundingBoxAscent || fontSize / 2) + strokePadding + Math.max(0, shadowBlur - shadowOffsetY),
+    bottom: (metrics.actualBoundingBoxDescent || fontSize / 2) + strokePadding + shadowBlur + shadowOffsetY,
+  };
+};
+
+export const getFittedTextWatermarkFontSize = (
+  ctx: CanvasRenderingContext2D,
+  config: TextWatermarkConfig,
+  requestedFontSize: number,
+  imageWidth: number,
+  imageHeight: number
+) => {
+  let fontSize = Math.max(1, Math.round(requestedFontSize));
+  let bounds = getTextWatermarkVisualBounds(ctx, config, fontSize);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const fitScale = Math.min(1, imageWidth / Math.max(bounds.left + bounds.right, 1), imageHeight / Math.max(bounds.top + bounds.bottom, 1));
+    if (fitScale >= 0.999) break;
+    const nextFontSize = Math.max(1, Math.floor(fontSize * fitScale * 0.98));
+    if (nextFontSize === fontSize) break;
+    fontSize = nextFontSize;
+    bounds = getTextWatermarkVisualBounds(ctx, config, fontSize);
+  }
+
+  return { fontSize, bounds };
+};
+
 export const renderWatermarkedImage = async (
   file: File,
   config: WatermarkRenderConfig,
@@ -365,23 +412,35 @@ export const renderWatermarkedImage = async (
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(sourceImage.source, 0, 0, canvas.width, canvas.height);
 
-    const x = config.position.x * canvas.width;
-    const y = config.position.y * canvas.height;
-
     if (config.type === 'text') {
-      const fontSize = Math.max(8, Math.round((config.text.fontSize / Math.max(config.referenceWidth, 1)) * canvas.width));
       ctx.save();
       ctx.globalAlpha = config.text.opacity;
-      ctx.font = `700 ${fontSize}px Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = config.text.color;
+      const { fontSize, bounds } = getFittedTextWatermarkFontSize(
+        ctx,
+        config.text,
+        (config.text.fontSize / Math.max(config.referenceWidth, 1)) * canvas.width,
+        canvas.width,
+        canvas.height
+      );
+      const shadowBlur = config.text.shadow ? Math.max(3, fontSize * 0.12) : 0;
+      const shadowOffsetX = config.text.shadow ? Math.max(1, fontSize * 0.035) : 0;
+      const shadowOffsetY = config.text.shadow ? Math.max(1, fontSize * 0.05) : 0;
+      const position = clampAnchoredWatermarkPosition(config.position, {
+        imageWidth: canvas.width,
+        imageHeight: canvas.height,
+        ...bounds,
+      });
+      const x = position.x * canvas.width;
+      const y = position.y * canvas.height;
 
       if (config.text.shadow) {
         ctx.shadowColor = 'rgba(15, 23, 42, 0.42)';
-        ctx.shadowBlur = Math.max(3, fontSize * 0.12);
-        ctx.shadowOffsetX = Math.max(1, fontSize * 0.035);
-        ctx.shadowOffsetY = Math.max(1, fontSize * 0.05);
+        ctx.shadowBlur = shadowBlur;
+        ctx.shadowOffsetX = shadowOffsetX;
+        ctx.shadowOffsetY = shadowOffsetY;
       }
 
       if (config.text.outline) {
@@ -395,8 +454,20 @@ export const renderWatermarkedImage = async (
       ctx.restore();
     } else {
       if (!watermarkImage) throw new Error('请先上传水印图片');
-      const width = canvas.width * (config.image.scalePercent / 100);
-      const height = width * (watermarkImage.height / watermarkImage.width);
+      const { width, height } = getFittedImageWatermarkSize({
+        imageWidth: canvas.width,
+        imageHeight: canvas.height,
+        watermarkAspectRatio: watermarkImage.height / watermarkImage.width,
+        scalePercent: config.image.scalePercent,
+      });
+      const position = clampCenteredWatermarkPosition(config.position, {
+        imageWidth: canvas.width,
+        imageHeight: canvas.height,
+        watermarkWidth: width,
+        watermarkHeight: height,
+      });
+      const x = position.x * canvas.width;
+      const y = position.y * canvas.height;
       ctx.save();
       ctx.globalAlpha = config.image.opacity;
       ctx.imageSmoothingEnabled = true;

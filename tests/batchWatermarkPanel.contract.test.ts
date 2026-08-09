@@ -16,6 +16,10 @@ describe('batch watermark production UI contract', () => {
     expect(panelSource).toContain('batch-watermark-center-guide');
   });
 
+  it('gives the positioned image-watermark overlay its calculated width', () => {
+    expect(panelSource).toContain('width: watermarkImageUrl ? `${previewWatermarkSize.width}px` : undefined');
+  });
+
   it('keeps local watermark storage and production diagnostics separate', () => {
     expect(panelSource).toContain('仅保存在当前浏览器');
     expect(panelSource).toContain('SHOW_FILE_IMPORT_DEBUG && (');
