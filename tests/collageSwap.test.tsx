@@ -45,6 +45,7 @@ describe('CollageGrid click-to-swap', () => {
         items={items}
         layout={LayoutType.GRID_2X2}
         setItems={setItems}
+        onReplaceFile={(id, file) => setItems((prev) => replaceItemUrl(prev, id, URL.createObjectURL(file)))}
         gap={3}
         borderRadius={6}
         isExportMode={exportMode}
@@ -214,5 +215,22 @@ describe('CollageGrid click-to-swap', () => {
     expect(host.querySelector('[data-testid="replace-image"]')).toBeNull();
     expect(hint()).toBeNull();
     expect(host.querySelectorAll('img').length).toBe(4);
+  });
+  it('editor renders the light preview; export mode renders the original; loading shows a placeholder', () => {
+    const items: CollageItem[] = [
+      { id: 'p', url: 'blob:original-p', previewUrl: 'blob:preview-p' },
+      { id: 'q', url: 'blob:original-q', loading: true },
+      { id: 'r', url: 'https://img.test/r.png' }, // no preview: falls back to url
+    ];
+    const View: React.FC<{ exportMode: boolean }> = ({ exportMode }) => (
+      <CollageGrid items={items} layout={LayoutType.GRID_3X3} setItems={() => {}} onReplaceFile={() => {}} gap={0} borderRadius={0} isExportMode={exportMode} />
+    );
+    act(() => root.render(<View exportMode={false} />));
+    expect(Array.from(host.querySelectorAll('img')).map((i) => i.getAttribute('src'))).toEqual(['blob:preview-p', 'https://img.test/r.png']);
+    expect(host.textContent).toContain('处理中');
+
+    act(() => root.render(<View exportMode />));
+    expect(Array.from(host.querySelectorAll('img')).map((i) => i.getAttribute('src'))).toEqual(['blob:original-p', 'blob:original-q', 'https://img.test/r.png']);
+    expect(host.textContent).not.toContain('处理中');
   });
 });

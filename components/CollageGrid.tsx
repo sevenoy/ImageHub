@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Repeat2, RotateCcw, X } from 'lucide-react';
 import { PhotoCard } from './PhotoCard';
 import { CollageItem, LayoutType } from '../types';
-import { replaceItemUrl, swapItemsById } from '../utils/collageSwap';
+import { swapItemsById } from '../utils/collageSwap';
 
 interface CollageGridProps {
   items: CollageItem[];
   layout: LayoutType;
   setItems: React.Dispatch<React.SetStateAction<CollageItem[]>>;
+  /** Replace one cell's image (owner creates the original + preview). */
+  onReplaceFile: (id: string, file: File) => void;
   gap: number;
   borderRadius: number;
   isExportMode?: boolean;
@@ -19,6 +21,7 @@ export const CollageGrid: React.FC<CollageGridProps> = ({
   items,
   layout,
   setItems,
+  onReplaceFile,
   gap,
   borderRadius,
   isExportMode = false,
@@ -113,15 +116,14 @@ export const CollageGrid: React.FC<CollageGridProps> = ({
   };
 
   // Replacing an image is independent from swapping: it only changes that
-  // item's url and clears any pending selection / undo.
+  // item's image and clears any pending selection / undo.
   const handleReplace = useCallback(
     (id: string, file: File) => {
-      const url = URL.createObjectURL(file);
-      setItems((prev) => replaceItemUrl(prev, id, url));
+      onReplaceFile(id, file);
       select(null);
       startUndoWindow(null);
     },
-    [select, setItems, startUndoWindow],
+    [onReplaceFile, select, startUndoWindow],
   );
 
   const gridClass = layout === LayoutType.GRID_2X2 ? 'grid-cols-2' : 'grid-cols-3';

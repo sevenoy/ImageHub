@@ -86,12 +86,20 @@ const PhotoCardImpl: React.FC<PhotoCardProps> = ({
         onKeyDown={handleKeyDown}
         className={`absolute inset-0 outline-none ${canSwap && showUi ? 'cursor-pointer' : ''}`}
       >
-        <img
-          src={item.url}
-          alt={`第 ${index + 1} 张拼图图片`}
-          className="w-full h-full object-cover pointer-events-none select-none"
-          draggable={false}
-        />
+        {item.loading && !isExportMode ? (
+          <div className="flex h-full w-full items-center justify-center bg-gray-100 text-[11px] font-medium text-gray-400 select-none">
+            处理中…
+          </div>
+        ) : (
+          <img
+            // Editor shows the light preview; export always renders the original file.
+            src={isExportMode ? item.url : item.previewUrl ?? item.url}
+            alt={`第 ${index + 1} 张拼图图片`}
+            className="w-full h-full object-cover pointer-events-none select-none"
+            draggable={false}
+            decoding="async"
+          />
+        )}
       </div>
 
       {showUi && (

@@ -19,9 +19,16 @@ export const swapItemsById = (
   return next;
 };
 
-/** Replace only the image of one item; id (and so its position/identity) is kept. */
+/**
+ * Replace only the image of one item; id (and so its position/identity) is kept.
+ * The old preview is dropped; pass loading=true while a new one is generated.
+ */
 export const replaceItemUrl = (
   items: CollageItem[],
   id: string,
   url: string,
-): CollageItem[] => items.map((item) => (item.id === id ? { ...item, url } : item));
+  loading = false,
+): CollageItem[] =>
+  items.map((item) =>
+    item.id === id ? { id: item.id, url, ...(loading ? { loading: true } : {}) } : item,
+  );

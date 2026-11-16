@@ -31,6 +31,8 @@ import { BatchWatermarkPanel } from './components/BatchWatermarkPanel';
 import { ToolModeSwitcher } from './components/ToolModeSwitcher';
 import { CollageItem, LayoutType } from './types';
 import { ensurePoolSize, getVisibleItems, shuffleVisible } from './utils/collagePool';
+import { replaceItemUrl } from './utils/collageSwap';
+import { attachPreview, revokeLater } from './utils/previewImage';
 import { FILE_IMPORT_DEBUG_VERSION, SHOW_FILE_IMPORT_DEBUG } from './utils/nativeFolderInputDebug';
 
 // Placeholder images from Picsum
@@ -91,6 +93,8 @@ const App: React.FC = () => {
   // first `visibleCount` are shown and exported. Switching back restores the rest.
   const visibleCount = layout === LayoutType.GRID_2X2 ? 4 : 9;
   const visibleItems = getVisibleItems(items, visibleCount);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   useEffect(() => {
     setItems((prev) =>
@@ -121,6 +125,11 @@ const App: React.FC = () => {
     try {
       // Small delay to ensure render states are clean
       await new Promise(resolve => setTimeout(resolve, 100));
+      // Export mode swaps every <img> from its light preview to the original file;
+      // wait until the originals are loaded/decoded so the capture uses full resolution.
+      await Promise.all(
+        Array.from(collageRef.current?.querySelectorAll('img') ?? []).map((img: HTMLImageElement) => img.decode().catch(() => undefined)),
+      );
 
       let result: string | Blob | null = null;
       let finalFormat = exportFormat;
@@ -177,8 +186,17 @@ const App: React.FC = () => {
 
     setLayout(newLayout);
 
+    const targetCount = newLayout === LayoutType.GRID_2X2 ? 4 : 9;
+    const picked = files.slice(0, targetCount);
+    // Create the object URLs here (not inside the state updater, which React may run twice).
+    const uploaded: CollageItem[] = picked.map((file, idx) => ({
+      id: `upload-${Date.now()}-${idx}`,
+      url: URL.createObjectURL(file),
+      loading: true,
+    }));
+    const replaced = itemsRef.current.slice(0, uploaded.length);
+
     setItems(prev => {
-      const targetCount = newLayout === LayoutType.GRID_2X2 ? 4 : 9;
       const nextItems = [...prev];
 
       while (nextItems.length < targetCount) {
@@ -188,17 +206,30 @@ const App: React.FC = () => {
         });
       }
 
-      files.forEach((file, idx) => {
-        if (idx < targetCount) {
-          nextItems[idx] = {
-            id: `upload-${Date.now()}-${idx}`,
-            url: URL.createObjectURL(file)
-          };
-        }
+      uploaded.forEach((item, idx) => {
+        nextItems[idx] = item;
       });
 
       return nextItems;
     });
+
+    revokeLater(...replaced.flatMap((i) => [i.url, i.previewUrl]));
+    uploaded.forEach((item, idx) => attachPreview(picked[idx], item.id, item.url, setItems, () => itemsRef.current));
+  };
+
+  // Replace one image (from the cell's replace button): new original + new light preview.
+  const replaceImage = (id: string, file: File) => {
+    const old = itemsRef.current.find((i) => i.id === id);
+    const url = URL.createObjectURL(file);
+    setItems(prev => replaceItemUrl(prev, id, url, true));
+    if (old) revokeLater(old.url, old.previewUrl);
+    attachPreview(file, id, url, setItems, () => itemsRef.current);
+  };
+
+  const resetImages = () => {
+    const old = itemsRef.current;
+    setItems(prev => prev.map((item, idx) => ({ id: item.id, url: DEFAULT_IMAGES[idx % DEFAULT_IMAGES.length] + `?r=${Date.now()}` })));
+    revokeLater(...old.flatMap((i) => [i.url, i.previewUrl]));
   };
 
   // Global Drag Handlers
@@ -325,6 +356,7 @@ const App: React.FC = () => {
               items={visibleItems}
               layout={layout}
               setItems={setItems}
+              onReplaceFile={replaceImage}
               gap={gap}
               borderRadius={borderRadius}
               isExportMode={isExportMode}
@@ -446,7 +478,7 @@ const App: React.FC = () => {
                     <span>随机位置</span>
                   </button>
                   <button
-                    onClick={() => setItems(prev => prev.map((item, idx) => ({ ...item, url: DEFAULT_IMAGES[idx % DEFAULT_IMAGES.length] + `?r=${Date.now()}` })))}
+                    onClick={resetImages}
                     className="flex items-center justify-center gap-2 p-2.5 bg-slate-50 text-slate-700 rounded-lg hover:bg-slate-100 transition-colors font-medium text-xs border border-slate-200"
                   >
                     <RotateCcw size={14} />
