@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { memo, useRef } from 'react';
 import { Check, ImagePlus, Repeat2 } from 'lucide-react';
 import { CollageItem } from '../types';
 
@@ -7,13 +7,13 @@ interface PhotoCardProps {
   index: number;
   onReplace: (id: string, file: File) => void;
   onSwapClick: (id: string) => void;
+  /** Mouse press: acts immediately; the grid swallows the click that follows. */
+  onSwapPress: (id: string) => void;
   borderRadius: number;
   canSwap: boolean;
   isSelected: boolean;
   /** Another card is selected and this one is a possible swap partner. */
   isSwapTarget: boolean;
-  /** Just swapped: shows a brief confirmation outline. */
-  isFlashing: boolean;
   isExportMode?: boolean;
 }
 
@@ -25,16 +25,16 @@ interface PhotoCardProps {
  * All selection UI is drawn in overlays marked data-export-ignore and is not
  * rendered at all while exporting; the image itself is never dimmed.
  */
-export const PhotoCard: React.FC<PhotoCardProps> = ({
+const PhotoCardImpl: React.FC<PhotoCardProps> = ({
   item,
   index,
   onReplace,
   onSwapClick,
+  onSwapPress,
   borderRadius,
   canSwap,
   isSelected,
   isSwapTarget,
-  isFlashing,
   isExportMode = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -44,6 +44,12 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     const file = event.target.files?.[0];
     if (file && file.type.startsWith('image/')) onReplace(item.id, file);
     event.target.value = '';
+  };
+
+  // Mouse acts on press (like a native editor) instead of waiting for release.
+  // Touch / pen clicks still go through onClick.
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (canSwap && event.pointerType === 'mouse' && event.button === 0) onSwapPress(item.id);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -75,6 +81,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         aria-pressed={canSwap ? isSelected : undefined}
         aria-label={label}
         tabIndex={canSwap ? 0 : -1}
+        onPointerDown={handlePointerDown}
         onClick={canSwap ? () => onSwapClick(item.id) : undefined}
         onKeyDown={handleKeyDown}
         className={`absolute inset-0 outline-none ${canSwap && showUi ? 'cursor-pointer' : ''}`}
@@ -89,14 +96,12 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
       {showUi && (
         <div data-export-ignore="true" className="pointer-events-none absolute inset-0">
-          {/* outline only: the photo underneath stays fully visible */}
+          {/* outline only (no transition: state changes must show on the very next frame) */}
           <div
-            className={`absolute inset-0 transition-all duration-150 ${
+            className={`absolute inset-0 ${
               isSelected
                 ? 'border-4 border-indigo-500 shadow-[inset_0_0_0_2px_rgba(255,255,255,0.9)]'
-                : isFlashing
-                  ? 'border-[3px] border-emerald-400'
-                  : 'border-0 border-transparent'
+                : 'border-0 border-transparent'
             }`}
             style={{ borderRadius: `${borderRadius}px` }}
           />
@@ -123,7 +128,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           aria-label={`替换第 ${index + 1} 张图片`}
           title="替换图片"
           onClick={() => fileInputRef.current?.click()}
-          className={`absolute bottom-2 right-2 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-md ring-1 ring-black/5 transition-opacity hover:bg-white active:scale-95 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+          className={`absolute bottom-2 right-2 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-md ring-1 ring-black/5 hover:bg-white active:scale-95 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
             isSelected ? 'opacity-100' : 'opacity-80 group-hover:opacity-100'
           }`}
         >
@@ -142,3 +147,5 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     </div>
   );
 };
+
+export const PhotoCard = memo(PhotoCardImpl);

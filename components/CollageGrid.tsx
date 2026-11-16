@@ -14,7 +14,6 @@ interface CollageGridProps {
 }
 
 const UNDO_WINDOW_MS = 5000;
-const FLASH_MS = 700;
 
 export const CollageGrid: React.FC<CollageGridProps> = ({
   items,
@@ -26,27 +25,42 @@ export const CollageGrid: React.FC<CollageGridProps> = ({
 }) => {
   // Selection and undo are tracked by item id, never by index, so they stay
   // attached to the right image even if the list changes in between.
+  // The ref mirrors the state so click handlers stay referentially stable
+  // (PhotoCard is memoized) and always see the latest selection, even for two
+  // clicks that land within the same frame.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedRef = useRef<string | null>(null);
   const [lastSwap, setLastSwap] = useState<{ a: string; b: string } | null>(null);
-  const [flashIds, setFlashIds] = useState<string[]>([]);
-  const timers = useRef<number[]>([]);
+  const swallowNextClick = useRef(false);
+  const undoTimer = useRef<number | undefined>(undefined);
   const canSwap = items.length > 1;
+  const canSwapRef = useRef(canSwap);
+  canSwapRef.current = canSwap;
 
-  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
+  const select = useCallback((id: string | null) => {
+    selectedRef.current = id;
+    setSelectedId(id);
+  }, []);
 
-  const later = (fn: () => void, ms: number) => {
-    timers.current.push(window.setTimeout(fn, ms));
-  };
+  const startUndoWindow = useCallback((pair: { a: string; b: string } | null) => {
+    window.clearTimeout(undoTimer.current);
+    setLastSwap(pair);
+    if (pair) {
+      undoTimer.current = window.setTimeout(() => setLastSwap(null), UNDO_WINDOW_MS);
+    }
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(undoTimer.current), []);
 
   // Drop stale selection / undo if an item disappeared (e.g. layout shrank).
   useEffect(() => {
-    if (selectedId !== null && !items.some((i) => i.id === selectedId)) setSelectedId(null);
+    if (selectedId !== null && !items.some((i) => i.id === selectedId)) select(null);
     if (lastSwap && !(items.some((i) => i.id === lastSwap.a) && items.some((i) => i.id === lastSwap.b))) {
-      setLastSwap(null);
+      startUndoWindow(null);
     }
-  }, [items, selectedId, lastSwap]);
+  }, [items, selectedId, lastSwap, select, startUndoWindow]);
 
-  const cancelSelection = useCallback(() => setSelectedId(null), []);
+  const cancelSelection = useCallback(() => select(null), [select]);
 
   // Esc cancels the current selection from anywhere on the page.
   useEffect(() => {
@@ -58,56 +72,75 @@ export const CollageGrid: React.FC<CollageGridProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedId, cancelSelection]);
 
-  const flash = (ids: string[]) => {
-    setFlashIds(ids);
-    later(() => setFlashIds([]), FLASH_MS);
-  };
+  const handleSwapSelect = useCallback(
+    (id: string) => {
+      if (!canSwapRef.current) return;
+      const current = selectedRef.current;
 
-  const handleSwapSelect = (id: string) => {
-    if (!canSwap) return;
+      if (current === null) {
+        startUndoWindow(null);
+        select(id);
+        return;
+      }
+      if (current === id) {
+        select(null);
+        return;
+      }
 
-    if (selectedId === null) {
-      setLastSwap(null);
-      setSelectedId(id);
-      return;
-    }
+      const pair = { a: current, b: id };
+      setItems((prev) => swapItemsById(prev, pair.a, pair.b));
+      select(null);
+      startUndoWindow(pair);
+    },
+    [select, setItems, startUndoWindow],
+  );
 
-    if (selectedId === id) {
-      setSelectedId(null);
-      return;
-    }
-
-    const pair = { a: selectedId, b: id };
-    setItems((prev) => swapItemsById(prev, pair.a, pair.b));
-    setSelectedId(null);
-    setLastSwap(pair);
-    flash([pair.a, pair.b]);
-    later(() => setLastSwap((current) => (current === pair ? null : current)), UNDO_WINDOW_MS);
-  };
+  // A mouse press already did the work; drop the click that follows it, wherever
+  // the browser delivers it (the card under the cursor may have moved).
+  const handlePress = useCallback(
+    (id: string) => {
+      swallowNextClick.current = true;
+      handleSwapSelect(id);
+    },
+    [handleSwapSelect],
+  );
 
   const undoSwap = () => {
     if (!lastSwap) return;
     const pair = lastSwap;
     setItems((prev) => swapItemsById(prev, pair.a, pair.b));
-    setLastSwap(null);
-    flash([pair.a, pair.b]);
+    startUndoWindow(null);
   };
 
   // Replacing an image is independent from swapping: it only changes that
-  // item's url and leaves selection-free state behind.
-  const handleReplace = (id: string, file: File) => {
-    const url = URL.createObjectURL(file);
-    setItems((prev) => replaceItemUrl(prev, id, url));
-    setSelectedId(null);
-    setLastSwap(null);
-  };
+  // item's url and clears any pending selection / undo.
+  const handleReplace = useCallback(
+    (id: string, file: File) => {
+      const url = URL.createObjectURL(file);
+      setItems((prev) => replaceItemUrl(prev, id, url));
+      select(null);
+      startUndoWindow(null);
+    },
+    [select, setItems, startUndoWindow],
+  );
 
   const gridClass = layout === LayoutType.GRID_2X2 ? 'grid-cols-2' : 'grid-cols-3';
   const showHint = !isExportMode && canSwap && (selectedId !== null || lastSwap !== null);
 
   return (
     <div className="relative w-full h-full">
-      <div className={`grid ${gridClass} w-full h-full`} style={{ gap: `${gap}px` }}>
+      <div
+        className={`grid ${gridClass} w-full h-full`}
+        style={{ gap: `${gap}px` }}
+        onPointerDownCapture={() => {
+          swallowNextClick.current = false;
+        }}
+        onClickCapture={(event) => {
+          if (!swallowNextClick.current) return;
+          swallowNextClick.current = false;
+          event.stopPropagation();
+        }}
+      >
         {items.map((item, index) => (
           <PhotoCard
             key={item.id}
@@ -115,11 +148,11 @@ export const CollageGrid: React.FC<CollageGridProps> = ({
             index={index}
             onReplace={handleReplace}
             onSwapClick={handleSwapSelect}
+            onSwapPress={handlePress}
             borderRadius={borderRadius}
             canSwap={canSwap}
             isSelected={selectedId === item.id}
             isSwapTarget={selectedId !== null && selectedId !== item.id}
-            isFlashing={flashIds.includes(item.id)}
             isExportMode={isExportMode}
           />
         ))}
@@ -133,7 +166,7 @@ export const CollageGrid: React.FC<CollageGridProps> = ({
           aria-live="polite"
           className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-3"
         >
-          <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-slate-900/90 py-1 pl-3 pr-1 text-xs font-medium text-white shadow-lg backdrop-blur">
+          <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-slate-900 py-1 pl-3 pr-1 text-xs font-medium text-white shadow-lg">
             {selectedId !== null ? (
               <>
                 <Repeat2 size={14} className="shrink-0 text-indigo-300" />

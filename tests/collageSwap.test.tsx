@@ -93,6 +93,42 @@ describe('CollageGrid click-to-swap', () => {
     expect(order()).toEqual(['a', 'd', 'b', 'c']);
   });
 
+  it('mouse acts on press (not release) and the trailing click does not double-fire', () => {
+    render();
+    const press = (el: Element, pointerType: string) =>
+      act(() => {
+        const e = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+        Object.defineProperty(e, 'pointerType', { value: pointerType });
+        el.dispatchEvent(e);
+      });
+
+    press(cards()[0], 'mouse');
+    expect(cards()[0].dataset.selected).toBe('true'); // selected before release
+    click(cards()[0]); // the click that follows the press is swallowed
+    expect(cards()[0].dataset.selected).toBe('true');
+
+    press(cards()[2], 'mouse');
+    expect(order()).toEqual(['c', 'b', 'a', 'd']); // swapped on press
+    click(cards()[2]);
+    expect(order()).toEqual(['c', 'b', 'a', 'd']);
+    expect(cards().every((c) => c.dataset.selected === 'false')).toBe(true);
+
+    // touch: pointerdown alone does nothing, the click selects
+    press(cards()[1], 'touch');
+    expect(cards()[1].dataset.selected).toBe('false');
+    click(cards()[1]);
+    expect(cards()[1].dataset.selected).toBe('true');
+  });
+
+  it('two clicks in the same frame still swap the right pair', () => {
+    render();
+    act(() => {
+      cards()[0].click();
+      cards()[3].click();
+    });
+    expect(order()).toEqual(['d', 'b', 'c', 'a']);
+  });
+
   it('clicking the selected card again cancels; Esc cancels too', () => {
     render();
     click(cards()[1]);
