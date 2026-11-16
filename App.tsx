@@ -30,6 +30,7 @@ import { CollageGrid } from './components/CollageGrid';
 import { BatchWatermarkPanel } from './components/BatchWatermarkPanel';
 import { ToolModeSwitcher } from './components/ToolModeSwitcher';
 import { CollageItem, LayoutType } from './types';
+import { ensurePoolSize, getVisibleItems, shuffleVisible } from './utils/collagePool';
 import { FILE_IMPORT_DEBUG_VERSION, SHOW_FILE_IMPORT_DEBUG } from './utils/nativeFolderInputDebug';
 
 // Placeholder images from Picsum
@@ -86,26 +87,19 @@ const App: React.FC = () => {
   const [isDragOver, setIsDragOver] = useState(false);
   const collageRef = useRef<HTMLDivElement>(null);
 
-  // Initialize items based on layout
-  useEffect(() => {
-    const count = layout === LayoutType.GRID_2X2 ? 4 : 9;
+  // `items` is a pool that is never shortened when the layout shrinks; only the
+  // first `visibleCount` are shown and exported. Switching back restores the rest.
+  const visibleCount = layout === LayoutType.GRID_2X2 ? 4 : 9;
+  const visibleItems = getVisibleItems(items, visibleCount);
 
-    setItems((prev) => {
-      // If we are shrinking, slice the array
-      if (prev.length >= count) {
-        return prev.slice(0, count);
-      }
-      // If growing, add new items
-      const newItems = [...prev];
-      for (let i = prev.length; i < count; i++) {
-        newItems.push({
-          id: `item-${Date.now()}-${i}`,
-          url: DEFAULT_IMAGES[i % DEFAULT_IMAGES.length],
-        });
-      }
-      return newItems;
-    });
-  }, [layout]);
+  useEffect(() => {
+    setItems((prev) =>
+      ensurePoolSize(prev, visibleCount, (i) => ({
+        id: `item-${Date.now()}-${i}`,
+        url: DEFAULT_IMAGES[i % DEFAULT_IMAGES.length],
+      })),
+    );
+  }, [visibleCount]);
 
   const handleDownload = async () => {
     if (!collageRef.current) return;
@@ -185,11 +179,8 @@ const App: React.FC = () => {
 
     setItems(prev => {
       const targetCount = newLayout === LayoutType.GRID_2X2 ? 4 : 9;
-      let nextItems = [...prev];
+      const nextItems = [...prev];
 
-      if (nextItems.length > targetCount) {
-        nextItems = nextItems.slice(0, targetCount);
-      }
       while (nextItems.length < targetCount) {
         nextItems.push({
           id: `auto-${Date.now()}-${nextItems.length}`,
@@ -235,14 +226,7 @@ const App: React.FC = () => {
 
   // Feature: Shuffle Images
   const shuffleItems = () => {
-    setItems(prev => {
-      const shuffled = [...prev];
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      return shuffled;
-    });
+    setItems(prev => shuffleVisible(prev, visibleCount));
   };
 
   // Feature: Seamless Mode
@@ -338,7 +322,7 @@ const App: React.FC = () => {
             ref={collageRef}
           >
             <CollageGrid
-              items={items}
+              items={visibleItems}
               layout={layout}
               setItems={setItems}
               gap={gap}
